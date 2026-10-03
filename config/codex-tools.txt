@@ -1,9 +1,11 @@
 # Base files copied from build/world into the codex root, by path.
 # Their shared libraries are added automatically from the ELF dependencies.
 # Rescue applets (ls, cp, sed, tar, dhclient, ...) are linked by codex_root.py.
+bin/timeout
 libexec/ld-elf.so.1
 usr/bin/awk
 usr/bin/basename
+usr/bin/bsdunzip
 usr/bin/clear
 usr/bin/cmp
 usr/bin/comm

@@ -57,11 +57,6 @@ static inline int first_write(UINTN address, UINT32 mask, UINT32 value) {
         if (log_addr[i] == address && (log_val[i] & mask) == value) return i;
     return -1;
 }
-static inline int last_write(UINTN address) {
-    for (int i = log_count - 1; i >= 0; i--)
-        if (log_addr[i] == address) return i;
-    return -1;
-}
 static UINTN MicroSecondDelay(UINTN us) { delay_total += us; return us; }
 '''
 
@@ -72,6 +67,11 @@ class UsbHostTests(unittest.TestCase):
 
     def test_usb_host_bring_up_vbus_and_failures(self):
         prelude = TYPES + (ROOT / "config/switchbsd-usb-host.h").read_text() + MMIO + r'''
+static int last_write(UINTN address) {
+    for (int i = log_count - 1; i >= 0; i--)
+        if (log_addr[i] == address) return i;
+    return -1;
+}
 static int phy_mode;          /* 0 valid, 1 never valid, 2 lost after reset */
 static int reset_sticks, reset_done, pllu_locks;
 static UINT32 MmioRead32(UINTN address) {
