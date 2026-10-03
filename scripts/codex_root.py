@@ -53,28 +53,28 @@ def config():
     return json.loads((ROOT / "config/codex-packages.json").read_text())
 
 
-def pkg_args(cfg):
+def pkg_args(cfg, cache=PKG):
     for name in ("repos", "db", "cache"):
-        (PKG / name).mkdir(parents=True, exist_ok=True)
+        (cache / name).mkdir(parents=True, exist_ok=True)
     # A private configuration: the host's pkg.conf, repositories and package
     # database are never read or changed, and no administrator access is needed.
-    (PKG / "pkg.conf").write_text(
+    (cache / "pkg.conf").write_text(
         f'ABI = "{cfg["abi"]}";\nOSVERSION = {cfg["osversion"]};\nIGNORE_OSVERSION = true;\n'
-        f'PKG_DBDIR = "{PKG}/db";\nPKG_CACHEDIR = "{PKG}/cache";\n'
-        f'REPOS_DIR = ["{PKG}/repos"];\nASSUME_ALWAYS_YES = true;\n')
-    (PKG / "repos/FreeBSD.conf").write_text(
+        f'PKG_DBDIR = "{cache}/db";\nPKG_CACHEDIR = "{cache}/cache";\n'
+        f'REPOS_DIR = ["{cache}/repos"];\nASSUME_ALWAYS_YES = true;\n')
+    (cache / "repos/FreeBSD.conf").write_text(
         'FreeBSD: {\n  url: "pkg+https://pkg.FreeBSD.org/${ABI}/' + cfg["repo"] + '",\n'
         '  mirror_type: "srv",\n  signature_type: "fingerprints",\n'
         '  fingerprints: "/usr/share/keys/pkg",\n  enabled: yes\n}\n')
-    return ["pkg", "-C", PKG / "pkg.conf"]
+    return ["pkg", "-C", cache / "pkg.conf"]
 
 
 def compact_manifest(package):
     return json.loads(subprocess.check_output(["tar", "-xOf", package, "+COMPACT_MANIFEST"]))
 
 
-def cached_manifest(cfg):
-    path = PKG / "manifest.json"
+def cached_manifest(cfg, cache=PKG):
+    path = cache / "manifest.json"
     if os.environ.get("PKG_REFRESH") or not path.exists():
         return None
     manifest = json.loads(path.read_text())
@@ -87,28 +87,29 @@ def cached_manifest(cfg):
     return manifest
 
 
-def fetch_packages():
-    """Fetch the codex packages and their dependencies once; reruns reuse the cache.
+def fetch_packages(cfg=None, cache=PKG, label="Codex packages"):
+    """Fetch packages and their dependencies once; reruns reuse the cache.
 
     pkg verifies the repository signature and every package checksum. The
     official repository deletes superseded packages, so versions and hashes are
     recorded in build-info.json instead of being pinned here.
     """
-    cfg = config()
-    manifest = cached_manifest(cfg)
+    cfg = cfg or config()
+    manifest = cached_manifest(cfg, cache)
     if manifest:
-        print("Codex packages: cached", ", ".join(f'{p["name"]}-{p["version"]}' for p in manifest["packages"]
-                                                  if p["name"] in cfg["packages"]))
+        print(f"{label}: cached", ", ".join(f'{p["name"]}-{p["version"]}' for p in manifest["packages"]
+                                            if p["name"] in cfg["packages"]))
         return manifest
     from build import require
     require(["pkg", "tar"])
-    args = pkg_args(cfg)
-    out = PKG / cfg["abi"].replace(":", "-")
+    args = pkg_args(cfg, cache)
+    out = cache / cfg["abi"].replace(":", "-")
     if out.exists():
         shutil.rmtree(out)
     out.mkdir()
-    run(args + ["update", "-f"], log="pkg-update.log")
-    run(args + ["fetch", "-y", "-U", "-d", "-o", out] + cfg["packages"], log="pkg-fetch.log")
+    logs = "pkg" if cache == PKG else cache.name
+    run(args + ["update", "-f"], log=f"{logs}-update.log")
+    run(args + ["fetch", "-y", "-U", "-d", "-o", out] + cfg["packages"], log=f"{logs}-fetch.log")
     packages = []
     for package in sorted(out.rglob("*.pkg")):
         meta = compact_manifest(package)
@@ -116,9 +117,10 @@ def fetch_packages():
                          "sha256": digest(package), "path": str(package.relative_to(ROOT))})
     missing = set(cfg["packages"]) - {p["name"] for p in packages}
     if missing:
-        raise RuntimeError("pkg fetch did not return: " + ", ".join(sorted(missing)) + "; see logs/pkg-fetch.log")
+        raise RuntimeError("pkg fetch did not return: " + ", ".join(sorted(missing)) +
+                           f"; see logs/{logs}-fetch.log")
     manifest = {"config": cfg, "packages": packages}
-    (PKG / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (cache / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest
 
 

@@ -1,0 +1,75 @@
+#!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026, SwitchBSD experiment contributors
+#
+# PROVIDE: switchbsd
+# REQUIRE: NETWORKING ldconfig
+# BEFORE: LOGIN
+# KEYWORD: shutdown
+#
+# SwitchBSD USB-stick root: clock, network, SSH and NTP at boot. The network
+# settings still come from the SD card through the kernel environment; see
+# switchbsd-net. The Switch has no battery-backed clock that FreeBSD can read,
+# so the time saved at shutdown is the floor for the next boot.
+
+. /etc/rc.subr
+
+name="switchbsd"
+desc="SwitchBSD clock, network and SSH"
+rcvar="switchbsd_enable"
+start_cmd="switchbsd_start"
+stop_cmd="switchbsd_stop"
+
+load_rc_config $name
+: ${switchbsd_enable:="YES"}
+: ${switchbsd_clock:="/var/db/switchbsd-clock"}
+: ${switchbsd_epoch:="/etc/switchbsd-build-epoch"}
+
+# TLS rejects every certificate while the clock reads 1970. Never start
+# earlier than the image build or the last clean shutdown.
+switchbsd_clock_floor()
+{
+	floor=0
+	for file in "$switchbsd_epoch" "$switchbsd_clock"; do
+		value=$(cat "$file" 2>/dev/null)
+		case $value in
+		''|*[!0-9]*) ;;
+		*) [ "$value" -gt "$floor" ] && floor=$value ;;
+		esac
+	done
+	if [ "$(date +%s)" -lt "$floor" ]; then
+		date -f %s "$floor" >/dev/null
+	fi
+}
+
+switchbsd_start()
+{
+	echo
+	echo 'SWITCHBSD: USERLAND_READY'
+	echo 'SwitchBSD USB root: / is on the USB stick; changes persist.'
+	uname -a
+	switchbsd_clock_floor
+	# The certificate links are made once, after the first boot's packages.
+	if [ -z "$(ls /etc/ssl/certs 2>/dev/null)" ]; then
+		certctl rehash
+	fi
+	# --foreground leaves the daemons it starts running.
+	timeout --foreground -k 5s 150s /usr/local/bin/switchbsd-net start
+	if timeout 30 ntpd -qg -c /etc/ntp.conf >/dev/null 2>&1; then
+		echo "Clock: $(date) (NTP)"
+		date +%s > "$switchbsd_clock"
+	else
+		echo "Clock: $(date) (NTP failed; TLS may reject certificates)"
+	fi
+	echo "Codex: $(codex --version 2>&1 | head -n 1)"
+	echo 'Updates: switchbsd-update (base system from the build host, tools from FreeBSD).'
+}
+
+switchbsd_stop()
+{
+	date +%s > "$switchbsd_clock"
+}
+
+run_rc_command "$1"

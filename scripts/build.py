@@ -35,6 +35,12 @@ NETWORK_UPDATE_FILES = ("boot/kernel/kernel", "boot/rootfs.ufs", "boot/entropy",
 CODEX_UPDATE_FILES = tuple(dict.fromkeys(USB_UPDATE_FILES + NETWORK_UPDATE_FILES +
     ("boot/rootfs-codex.ufs.gz", "boot/loader.conf.local", "switchbsd/CODEX.md",
      "switchbsd/docs/diagnostics.md")))
+# The USB-stick root: ZIP path -> SD bundle path. The kernel must come from the
+# build that made the stick's pkgbase repository; the diagnostic RAM root is
+# the fallback when the stick is missing.
+USBROOT_UPDATE_FILES = {"boot/loader.conf.local": "switchbsd/usbroot/loader.conf.local",
+                        **{name: name for name in ("boot/kernel/kernel", "boot/rootfs.ufs",
+                                                   "switchbsd/USBROOT.md", "switchbsd/BUILD-TIME.txt")}}
 RESCUE_TOOLS = (
     "sh", "mount", "umount", "hostname", "sysctl", "ls", "cat", "dmesg", "kenv",
     "reboot", "halt", "sleep", "ps", "df", "stty", "ifconfig", "date", "camcontrol",
@@ -112,7 +118,8 @@ def doctor():
         raise RuntimeError("Build host must be FreeBSD 15.1 or newer")
     require(["make", "gmake", "clang", "git", "tar", "makefs", "mkimg", "iasl",
              "gcc14", "g++14", "bison", "bash", "aarch64-none-elf-gcc", "arm-none-eabi-gcc",
-             "mcopy", "qemu-system-aarch64", "ssh", "scp", "ssh-keygen", "/usr/sbin/pwd_mkdb"])
+             "mcopy", "qemu-system-aarch64", "ssh", "scp", "ssh-keygen", "/usr/sbin/pwd_mkdb",
+             "pkg", "openssl", "cap_mkdb", "/usr/sbin/services_mkdb"])
     newlib = Path(shutil.which("arm-none-eabi-gcc")).resolve().parents[1] / "arm-none-eabi"
     if not (newlib / "include/stdlib.h").is_file() or not (newlib / "lib/libc.a").is_file():
         raise RuntimeError("Missing target C library; install arm-none-eabi-newlib")
@@ -141,6 +148,17 @@ def fetch():
         stamp.write_text(entry["revision"] + "\n")
     from codex_root import fetch_packages
     fetch_packages()
+    from usb_root import config as usb_config, PORTS_CACHE
+    fetch_packages(usb_config()["ports"], PORTS_CACHE, "USB root packages")
+
+
+def freebsd_make():
+    """The cross-build make command and environment shared by every FreeBSD target."""
+    env = dict(os.environ, MAKEOBJDIRPREFIX=str(BUILD / "obj"))
+    args = ["/usr/bin/make", "-C", SRC / "freebsd", f"-j{JOBS}",
+            "TARGET=arm64", "TARGET_ARCH=aarch64", f"SRCCONF={ROOT}/config/src.conf",
+            "__MAKE_CONF=/dev/null"]
+    return args, env
 
 
 def freebsd():
@@ -160,10 +178,7 @@ def freebsd():
             "dev/usb/controller/generic_ehci_acpi.c\t\toptional ehci acpi\n"
             "dev/usb/controller/switchbsd_ehci_acpi.c\toptional ehci acpi\n")
     shutil.copyfile(ROOT / "config/SWITCHDIAG", SRC / "freebsd/sys/arm64/conf/SWITCHDIAG")
-    env = dict(os.environ, MAKEOBJDIRPREFIX=str(BUILD / "obj"))
-    args = ["/usr/bin/make", "-C", SRC / "freebsd", f"-j{JOBS}",
-            "TARGET=arm64", "TARGET_ARCH=aarch64", f"SRCCONF={ROOT}/config/src.conf",
-            "__MAKE_CONF=/dev/null"]
+    args, env = freebsd_make()
     run(args + ["buildworld"], env=env, log="buildworld.log")
     run(args + ["buildkernel", "KERNCONF=SWITCHDIAG", "NO_MODULES=yes"], env=env, log="buildkernel.log")
     stage = BUILD / "world"
@@ -404,6 +419,8 @@ def assemble_os(build_time=None):
     copy(BUILD / "rootfs.ufs", sd / "boot/rootfs.ufs")
     from codex_root import assemble_codex_root
     assemble_codex_root(sd, build_time)
+    from usb_root import assemble_usb_root
+    assemble_usb_root(sd, build_time)
     # The loader seeds random(4) from this file, so sshd and wpa_supplicant need
     # not wait for the Switch to gather entropy. FreeBSD cannot rewrite it on
     # the SD card, so each build gets a fresh one.
@@ -429,6 +446,7 @@ def image():
         "[FreeBSD 15.1 experiment]\npayload=bootloader/payloads/hekate-switchbsd.bin\n")
     copy(ROOT / "sources.lock.json", sd / "switchbsd/sources.lock.json")
     for name in ("README.md", "UPDATE.md", "CONSOLE-UPDATE.md", "USB-UPDATE.md", "NETWORK-UPDATE.md", "CODEX.md",
+                 "USBROOT.md",
                  "docs/boot-test.md", "docs/firmware.md", "docs/licenses.md",
                  "docs/hardware-boot-2026-10-03.md", "docs/diagnostics.md"):
         copy(ROOT / name, sd / "switchbsd" / name)
@@ -471,6 +489,10 @@ def image():
     metadata["target_packages"] = {
         p["name"]: {"version": p["version"], "origin": p["origin"], "sha256": p["sha256"],
                     "staged": p["name"] in codex["staged"]} for p in codex["packages"]}
+    usb = json.loads((BUILD / "root-usb.json").read_text())
+    metadata["artifacts"]["freebsd-switch-15.1-usbroot.img.gz"] = usb["image_gz_sha256"]
+    metadata["usb_root"] = {"ufs_mib": usb["ufs_mib"], "packages": usb["packages"],
+                            "pkgbase_public_key_sha256": digest(BUILD / "pkgbase/signing.pub")}
     (DIST / "build-info.json").write_text(json.dumps(metadata, indent=2) + "\n")
     with zipfile.ZipFile(DIST / "freebsd-switch-15.1-firmware-update.zip", "w", zipfile.ZIP_DEFLATED) as z:
         for name in ("switchbsd/coreboot.rom", "bootloader/payloads/hekate-switchbsd.bin",
@@ -495,6 +517,10 @@ def image():
         for path in sorted((sd / "switchbsd/licenses/packages").rglob("*")):
             if path.is_file():
                 z.write(path, path.relative_to(sd))
+        z.comment = f"SwitchBSD build time (UTC): {build_time}".encode()
+    with zipfile.ZipFile(DIST / "freebsd-switch-15.1-usbroot-update.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        for name, source in USBROOT_UPDATE_FILES.items():
+            z.write(sd / source, name)
         z.comment = f"SwitchBSD build time (UTC): {build_time}".encode()
     with zipfile.ZipFile(DIST / "freebsd-switch-15.1-diagnostics-update.zip", "w", zipfile.ZIP_DEFLATED) as z:
         for name in DIAGNOSTIC_UPDATE_FILES:
@@ -536,15 +562,26 @@ def smoke():
     run([sys.executable, ROOT / "scripts/smoke.py"])
 
 
+def pkgbase():
+    from pkgbase import build_repo
+    build_repo()
+
+
+def serve():
+    from pkgbase import serve as serve_repo
+    serve_repo()
+
+
 def all_steps():
-    for step in (doctor, fetch, firmware, freebsd, image, validate, test, smoke):
+    for step in (doctor, fetch, firmware, freebsd, pkgbase, image, validate, test, smoke):
         step()
 
 
 def main():
     for n in ("sources", "cache", "build", "dist", "logs"):
         (ROOT / n).mkdir(exist_ok=True)
-    commands = {k: globals()[k] for k in ("doctor", "fetch", "firmware", "freebsd", "image", "validate", "test", "smoke")}
+    commands = {k: globals()[k] for k in ("doctor", "fetch", "firmware", "freebsd", "pkgbase", "image",
+                                          "validate", "test", "smoke", "serve")}
     commands["all"] = all_steps
     command = sys.argv[1] if len(sys.argv) == 2 else "help"
     if command == "help":

@@ -55,6 +55,14 @@ the [codex root update](CODEX.md). It is a second, larger RAM root selected by
 The user confirmed the previous Codex build works on the Switch. This combined
 Codex/Wi-Fi build still needs a physical dongle test.
 
+The [USB-stick root](USBROOT.md) puts `/` on a USB stick, so files and
+packages persist. The FreeBSD base system updates on the Switch with
+`switchbsd-update` (`pkg upgrade`) from a package repository the build host
+makes and serves (`make pkgbase`, `make serve`) from the same source as the
+kernel. The loader, kernel and diagnostic RAM root stay on the SD card, which
+boots the RAM root when the stick is missing. A USB stick was detected on the
+Switch, but this root has only been tested in QEMU so far.
+
 For the subsequent FreeBSD screen followed by a white rectangle, apply the
 [screen console update](CONSOLE-UPDATE.md). It enables kernel output on both
 the framebuffer and UART, with the screen primary. Set `boot_serial="YES"` in
@@ -78,9 +86,15 @@ make doctor
 make fetch
 make firmware
 make freebsd
+make pkgbase
 make image
 make validate test smoke
 ```
+
+`make pkgbase` packages the staged FreeBSD world into a signed pkgbase
+repository in `build/pkgbase-repo`, using a signing key made once in
+`build/pkgbase/`. `make image` installs the USB-stick root from it. `make serve`
+serves the repository to the Switch; see [USBROOT.md](USBROOT.md).
 
 `JOBS=8` is the default parallelism within builds. Set `JOBS` in the environment
 to change it. `make all` runs the complete sequence in order. Allow several GiB
@@ -113,6 +127,9 @@ the staged programs execute or link go into the codex root.
 - `dist/freebsd-switch-15.1-codex-update.zip`: the build 8 and Wi-Fi/SSH files
   plus the Codex root, loader selection, guides and package licenses. Use this
   ZIP to add Wi-Fi to an existing Codex installation.
+- `dist/freebsd-switch-15.1-usbroot.img.gz`: the USB-stick root, to write to a stick.
+- `dist/freebsd-switch-15.1-usbroot-update.zip`: loader selection, matching kernel
+  and fallback RAM root that switch an SD card to the USB-stick root.
 - `dist/freebsd-switch-15.1-diagnostics-update.zip`: diagnostic RAM root and guide for an existing build 8 installation.
 - `dist/freebsd-switch-15.1-network-update.zip`: Wi-Fi/SSH kernel, RAM root, boot entropy,
   settings template and guide for an existing build 8 installation.

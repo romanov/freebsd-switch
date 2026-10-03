@@ -8,12 +8,87 @@ import struct
 import subprocess
 import sys
 import tempfile
+import uuid
 import zipfile
-from build import (ROOT, SRC, BUILD, DIST, USB_UPDATE_FILES, DIAGNOSTIC_UPDATE_FILES,
+from build import (ROOT, SRC, BUILD, DIST, USB_UPDATE_FILES, DIAGNOSTIC_UPDATE_FILES, USBROOT_UPDATE_FILES,
                    NETWORK_UPDATE_FILES, DIAGNOSTIC_TOOLS, RESCUE_TOOLS, NETWORK_PROGRAMS, RTLD,
                    digest, check_hash, elf_dynamic, library_closure, ownership_spec,
                    ssh_fingerprint, CODEX_UPDATE_FILES)
 import codex_root
+import usb_root
+
+FREEBSD_UFS = uuid.UUID("516e7cb6-6ecf-11d6-8ff8-00022d09712b")
+
+
+def gpt_partitions(stream):
+    """(type UUID, name, first LBA, last LBA) of each used GPT entry, 512-byte sectors."""
+    stream.seek(512)
+    header = stream.read(92)
+    if header[:8] != b"EFI PART":
+        raise RuntimeError("Missing GPT header")
+    entries_lba, count, size = struct.unpack_from("<QII", header, 72)
+    if size < 128 or count > 1024:
+        raise RuntimeError("Unsupported GPT partition entry layout")
+    stream.seek(entries_lba * 512)
+    table = stream.read(count * size)
+    partitions = []
+    for index in range(count):
+        entry = table[index * size:(index + 1) * size]
+        kind = uuid.UUID(bytes_le=entry[:16])
+        if kind.int == 0:
+            continue
+        first, last = struct.unpack_from("<QQ", entry, 32)
+        name = entry[56:128].decode("utf-16-le").split("\0", 1)[0]
+        partitions.append((kind, name, first, last))
+    return partitions
+
+
+def usb_stick(image, ufs, label=usb_root.LABEL):
+    """The stick image holds exactly the UFS root, in a freebsd-ufs partition named label."""
+    with open(image, "rb") as stream:
+        partitions = gpt_partitions(stream)
+        if [(kind, name) for kind, name, _, _ in partitions] != [(FREEBSD_UFS, label)]:
+            raise RuntimeError(f"USB root image must have one freebsd-ufs partition labelled {label}")
+        _, _, first, last = partitions[0]
+        length = Path(ufs).stat().st_size
+        if (last - first + 1) * 512 < length:
+            raise RuntimeError("USB root partition is smaller than its UFS image")
+        stream.seek(first * 512)
+        hasher = hashlib.sha256()
+        remaining = length
+        while remaining:
+            block = stream.read(min(remaining, 1 << 20))
+            if not block:
+                raise RuntimeError("USB root image is truncated")
+            hasher.update(block)
+            remaining -= len(block)
+    if hasher.hexdigest() != digest(ufs):
+        raise RuntimeError("USB root partition does not contain build/rootfs-usb.ufs")
+
+
+def usb_root_tree(sd, root=usb_root.USB_ROOT):
+    for name in usb_root.USB_REQUIRED:
+        if not ((root / name).exists() or (root / name).is_symlink()):
+            raise RuntimeError("Incomplete USB root: " + name)
+    for name in ("sbin/init", "usr/sbin/sshd", "usr/local/sbin/pkg", "usr/local/bin/codex"):
+        elf_aarch64(root / name)
+    for source, target, _ in usb_root.OVERLAY:
+        check_hash(root / target, digest(ROOT / source))
+    usb_root.check_loader_local((sd / "switchbsd/usbroot/loader.conf.local").read_text())
+    if list((root / "boot").glob("kernel*")):
+        raise RuntimeError("The USB root must not contain a kernel; the loader reads it from SD")
+    identity = json.loads((root / "etc/switchbsd-build.json").read_text())
+    if any(name.startswith("FreeBSD-kernel") for name in identity["packages"]):
+        raise RuntimeError("The USB root installed a kernel package")
+    check_hash(sd / "boot/kernel/kernel", identity["kernel_sha256"])
+    key = root / "etc/ssh/ssh_host_ed25519_key"
+    if key.stat().st_mode & 0o077:
+        raise RuntimeError("USB root SSH host key must be readable by root only")
+    if ssh_fingerprint(key.with_suffix(".pub").read_text()) + " (ED25519)" != identity["ssh_host_key_fingerprint"]:
+        raise RuntimeError("USB root SSH host key does not match its build identity")
+    metalog = usb_root.METALOG.read_text() if usb_root.METALOG.is_file() else ""
+    if usb_root.SPEC.read_text() != usb_root.merge_spec(metalog, ownership_spec(root)):
+        raise RuntimeError("USB root spec does not cover the current tree")
 
 
 def elf_aarch64(path, static=False):
@@ -104,7 +179,8 @@ def sd_files(sd):
                  "boot/loader.conf", "boot/defaults/loader.conf", "boot/lua/loader.lua",
                  "switchbsd/coreboot.rom", "bootloader/payloads/hekate-switchbsd.bin",
                  "boot/entropy", "boot/loader.conf.d/network.conf.sample",
-                 "boot/rootfs-codex.ufs.gz", "boot/loader.conf.local"]:
+                 "boot/rootfs-codex.ufs.gz", "boot/loader.conf.local",
+                 "switchbsd/usbroot/loader.conf.local", "switchbsd/USBROOT.md"]:
         if not (sd / name).is_file():
             raise RuntimeError("Incomplete SD bundle: " + name)
 
@@ -233,6 +309,12 @@ def main():
     network_root(codex_root.CODEX_ROOT,
                  json.loads((codex_root.CODEX_ROOT / "etc/switchbsd-build.json").read_text()),
                  BUILD / "rootfs-codex.mtree")
+    subprocess.run(["/sbin/fsck_ufs", "-n", usb_root.USB_UFS], check=True)
+    usb_root_tree(sd)
+    usb_stick(usb_root.USB_IMAGE, usb_root.USB_UFS)
+    with gzip.open(usb_root.USB_IMAGE_GZ, "rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != digest(usb_root.USB_IMAGE):
+            raise RuntimeError("The gzipped USB root image does not match build/" + usb_root.USB_IMAGE.name)
     image = DIST / "freebsd-switch-15.1.img"
     with image.open("rb") as stream:
         mbr = stream.read(512)
@@ -310,6 +392,17 @@ def main():
             if archive.read(name) != (sd / name).read_bytes():
                 raise RuntimeError("Network update does not match SD bundle: " + name)
     # The user's Wi-Fi and SSH settings must never be overwritten by an update.
+    with zipfile.ZipFile(DIST / "freebsd-switch-15.1-usbroot-update.zip") as archive:
+        if archive.testzip() is not None:
+            raise RuntimeError("Corrupt USB root update ZIP archive")
+        if archive_build_time(archive) != build_time:
+            raise RuntimeError("ZIP build times do not match")
+        if set(archive.namelist()) != set(USBROOT_UPDATE_FILES):
+            raise RuntimeError("Unexpected files in USB root update ZIP archive")
+        for name, source in USBROOT_UPDATE_FILES.items():
+            if archive.read(name) != (sd / source).read_bytes():
+                raise RuntimeError("USB root update does not match SD bundle: " + name)
+        usb_root.check_loader_local(archive.read("boot/loader.conf.local").decode())
     for path in DIST.glob("*.zip"):
         with zipfile.ZipFile(path) as archive:
             if any(name.lower().startswith("boot/loader.conf.d/") and name.lower().endswith(".conf")
@@ -318,7 +411,8 @@ def main():
     for line in (DIST / "SHA256SUMS").read_text().splitlines():
         sha, name = line.split("  ", 1)
         check_hash(DIST / name, sha)
-    print("SD image, RAM roots, AArch64 binaries, codex libraries and distribution checksums passed.")
+    print("SD image, RAM roots, USB root image, AArch64 binaries, codex libraries and "
+          "distribution checksums passed.")
 
 
 if __name__ == "__main__":

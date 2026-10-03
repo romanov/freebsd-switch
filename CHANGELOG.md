@@ -3,6 +3,25 @@
 Builds are numbered by firmware revision. All dates are 2026-10-03; details
 and validation records are in [STATUS.md](STATUS.md).
 
+## USB-stick root with pkgbase updates
+
+The firmware is unchanged from build 8.
+
+- `make pkgbase` packages the staged FreeBSD world into a signed pkgbase
+  repository; `make serve` serves it on the LAN.
+- `make image` installs a persistent root from it, with pkg, Codex, bash,
+  ripgrep and git, as `dist/freebsd-switch-15.1-usbroot.img.gz`. Kernel
+  packages are never installed; the kernel stays on the SD card.
+- `freebsd-switch-15.1-usbroot-update.zip` makes the loader mount
+  `/dev/gpt/switchroot` and fall back to the diagnostic RAM root.
+- `switchbsd-update` on the Switch updates the base system from the build host
+  and the tools from FreeBSD, and warns when the kernel on SD is out of step.
+- `switchbsd-net` now writes the SD card's SSH keys to
+  `authorized_keys.switchbsd`, so keys added by hand on a persistent root are
+  kept. Both RAM roots and the stick read both files.
+- QEMU smoke tests the stick's first boot, persistence after a reboot and the
+  fallback. Hardware testing is pending.
+
 ## Codex + Wi-Fi/SSH integration
 
 - Merged Wi-Fi update `441ff78` into the working Codex root, retaining USB

@@ -1,0 +1,80 @@
+#!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026, SwitchBSD experiment contributors
+#
+# Update the SwitchBSD USB-stick root with pkg. The FreeBSD base system comes
+# from the build host's pkgbase repository (make pkgbase; make serve), built
+# from the same source as the kernel on the SD card. Codex and the other tools
+# come from FreeBSD's package repository. pkg cannot reach the SD card, so a
+# new kernel is still copied to the card by hand.
+# SWITCHBSD_UPDATE_CONF only redirects the repository file for host tests.
+
+CONF=${SWITCHBSD_UPDATE_CONF:-/usr/local/etc/pkg/repos/SwitchBSD.conf}
+PLACEHOLDER=BUILD-HOST
+
+usage() {
+    echo 'Usage: switchbsd-update [--repo http://HOST:PORT] [-n]'
+    echo '  --repo URL  remember the build host serving make serve, then update'
+    echo '  -n          show what would change without installing anything'
+}
+
+repo_url() {
+    sed -n 's/^[[:space:]]*url:[[:space:]]*"\(.*\)\/\${ABI}\/latest".*/\1/p' "$CONF" | head -n 1
+}
+
+set_repo() {
+    case $1 in
+        http://*|https://*) ;;
+        *) echo "switchbsd-update: $1 is not an http:// or https:// URL" >&2; exit 2 ;;
+    esac
+    url=${1%/}
+    case $url in
+        *'|'*|*'"'*|*' '*|*'&'*|*'\'*) echo 'switchbsd-update: the URL contains an unsupported character' >&2
+                            exit 2 ;;
+    esac
+    sed "s|^\\([[:space:]]*url:[[:space:]]*\"\\).*\\(/\${ABI}/latest\"\\)|\\1$url\\2|" "$CONF" \
+        > "$CONF.new" && mv "$CONF.new" "$CONF" || exit 1
+    echo "Base repository: $url"
+}
+
+dry_run=no
+while [ $# -gt 0 ]; do
+    case $1 in
+        --repo) [ $# -ge 2 ] || { usage >&2; exit 2; }
+                set_repo "$2"; shift 2 ;;
+        -n) dry_run=yes; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) usage >&2; exit 2 ;;
+    esac
+done
+
+case $(repo_url) in
+    '') echo "switchbsd-update: no SwitchBSD repository URL in $CONF" >&2; exit 1 ;;
+    *$PLACEHOLDER*)
+        echo 'switchbsd-update: the build host is not set yet. On the build host run' >&2
+        echo '  make pkgbase && make serve' >&2
+        echo 'then here: switchbsd-update --repo http://<build host address>:8080' >&2
+        exit 1 ;;
+esac
+
+pkg update -f -r SwitchBSD || exit 1
+# Codex and the tools are optional for an update; the base system is not.
+if ! pkg update -f -r FreeBSD; then
+    echo 'switchbsd-update: the FreeBSD package repository is unreachable; Codex and the tools stay as they are.'
+fi
+if [ "$dry_run" = yes ]; then
+    # Exits 1 when upgrades are available.
+    pkg upgrade -U -n
+    exit
+fi
+pkg upgrade -U -y || exit 1
+
+userland=$(freebsd-version -u)
+kernel=$(freebsd-version -r)
+if [ "$userland" != "$kernel" ]; then
+    echo "SwitchBSD: the base system is now $userland but the running kernel is $kernel."
+    echo 'Copy boot/kernel/kernel from the same build'"'"'s usbroot update ZIP to the SD card,'
+    echo 'then reboot. Until then, keep using this kernel; do not reinstall it with pkg.'
+fi

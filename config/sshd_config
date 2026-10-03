@@ -4,7 +4,8 @@
 HostKey /etc/ssh/ssh_host_ed25519_key
 PermitRootLogin yes
 PubkeyAuthentication yes
-AuthorizedKeysFile .ssh/authorized_keys
+# switchbsd-net writes the SD card's keys to the second file at each boot.
+AuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys.switchbsd
 PasswordAuthentication yes
 PermitEmptyPasswords no
 KbdInteractiveAuthentication no

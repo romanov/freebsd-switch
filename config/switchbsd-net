@@ -18,6 +18,9 @@ WLAN=wlan0
 WPA_CONF=$root/etc/wpa_supplicant.conf
 STATE=$root/var/run/switchbsd-net.state
 SSH_DIR=$root/root/.ssh
+# Keys from the SD card settings. sshd also reads authorized_keys, which this
+# script never changes, so keys added by hand survive on a persistent root.
+SSH_KEYS=$SSH_DIR/authorized_keys.switchbsd
 FINGERPRINT=$root/etc/ssh/ssh_host_ed25519_key.fingerprint
 RESOLV_CONF=$root/etc/resolv.conf
 SSHD=$root/usr/sbin/sshd
@@ -87,13 +90,13 @@ configure() {
 
     keys=0
     mkdir -p "$SSH_DIR" && chmod 700 "$SSH_DIR"
-    (umask 077 && : > "$SSH_DIR/authorized_keys")
+    (umask 077 && : > "$SSH_KEYS")
     list=$(kenv 2>/dev/null | sed -n 's/^switchbsd\.ssh\.key[0-9]*="\(.*\)"$/\1/p')
     while IFS= read -r key; do
         case $key in
             '') ;;
             ssh-*|ecdsa-*|sk-*)
-                printf '%s\n' "$key" >> "$SSH_DIR/authorized_keys"
+                printf '%s\n' "$key" >> "$SSH_KEYS"
                 keys=$((keys + 1)) ;;
             *) echo 'SSH: ignoring a switchbsd.ssh.key value that is not an OpenSSH public key.' ;;
         esac

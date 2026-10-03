@@ -1,0 +1,17 @@
+{
+  "base": [
+    "FreeBSD-set-minimal",
+    "FreeBSD-caroot",
+    "FreeBSD-certctl",
+    "FreeBSD-ntp",
+    "FreeBSD-rescue",
+    "FreeBSD-ssh",
+    "FreeBSD-wpa"
+  ],
+  "ports": {
+    "abi": "FreeBSD:15:aarch64",
+    "osversion": 1501000,
+    "repo": "latest",
+    "packages": ["pkg", "codex", "bash", "ripgrep", "git-lite"]
+  }
+}

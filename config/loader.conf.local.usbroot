@@ -1,0 +1,10 @@
+# Boot FreeBSD with / on the USB stick labelled switchroot (see USBROOT.md).
+# The small diagnostic RAM root is still loaded: when the stick is missing or
+# cannot be mounted, the kernel falls back to it. Delete this file to boot the
+# diagnostic RAM root only.
+mfsroot_name="/boot/rootfs.ufs"
+vfs.root.mountfrom="ufs:/dev/gpt/switchroot ufs:/dev/md0"
+# Read-only first, so /etc/rc can check the stick before mounting it read-write.
+vfs.root.mountfrom.options="ro"
+# Seconds to wait for the USB stick to enumerate.
+vfs.mountroot.timeout="20"

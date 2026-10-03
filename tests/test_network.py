@@ -116,7 +116,7 @@ class NetworkScriptTests(unittest.TestCase):
                          'ctrl_interface_group=wheel\nnetwork={\n\tssid="Home Net"\n'
                          f'\tscan_ssid=1\n\tpsk="{PSK}"\n}}\n')
         self.assert_private(wpa)
-        keys = self.root / "root/.ssh/authorized_keys"
+        keys = self.root / "root/.ssh/authorized_keys.switchbsd"
         self.assertEqual(keys.read_text(), f"{KEY1}\n{KEY2}\n")
         self.assert_private(keys)
         self.assert_private(keys.parent)
@@ -159,6 +159,15 @@ class NetworkScriptTests(unittest.TestCase):
         self.assertFalse(any(call.startswith("pw ") for call in calls))
         for call in ("ifconfig wlan0 create wlandev rtwn0 country DE", "dhclient wlan0", "sshd "):
             self.assertIn(call, calls)
+
+    def test_keys_added_by_hand_are_never_changed(self):
+        hand = self.root / "root/.ssh/authorized_keys"
+        hand.parent.mkdir(parents=True)
+        hand.write_text(KEY2 + "\n")
+        result = self.run_net("start", (("switchbsd.ssh.key", KEY1),))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(hand.read_text(), KEY2 + "\n")
+        self.assertEqual((self.root / "root/.ssh/authorized_keys.switchbsd").read_text(), KEY1 + "\n")
 
     def test_open_network_needs_no_password(self):
         result = self.run_net("start", (("switchbsd.wifi.ssid", "Cafe"), ("switchbsd.ssh.key", KEY1)),
@@ -212,7 +221,7 @@ class NetworkScriptTests(unittest.TestCase):
         self.assertIn("ignoring switchbsd.wifi.country=germany", result.stdout)
         self.assertIn("not an OpenSSH public key", result.stdout)
         self.assertIn("ifconfig wlan0 create wlandev rtwn0", self.calls())
-        self.assertEqual((self.root / "root/.ssh/authorized_keys").read_text(), "")
+        self.assertEqual((self.root / "root/.ssh/authorized_keys.switchbsd").read_text(), "")
         self.assertIn("SSH: not started", result.stdout)
 
     def test_scan_and_usage(self):
