@@ -3,8 +3,9 @@
 Target: original Nintendo Switch **Erista / Tegra210**. This is an experimental
 boot bundle, not a supported FreeBSD hardware port. **FreeBSD 15.1 has reached
 userland and a root shell prompt on the Switch display.** The hardware photo
-shows `SWITCHBSD: USERLAND_READY`; physical keyboard/UART input remains
-unverified. See the [hardware boot record](docs/hardware-boot-2026-10-03.md).
+shows `SWITCHBSD: USERLAND_READY`; the user has also confirmed USB keyboard
+input with build 8. Physical UART input remains unverified.
+See the [hardware boot record](docs/hardware-boot-2026-10-03.md).
 The OS image can also be tested independently under ARM64 QEMU.
 
 Boot chain:
@@ -30,14 +31,29 @@ USB builds produced a black screen before UEFI.
 Build 8 adds a USB keyboard for the FreeBSD shell through a USB-C OTG adapter;
 see the [USB keyboard update](USB-UPDATE.md). The firmware powers the port and
 starts the USB1 controller after the screen is up, without a UEFI USB driver,
-and a small FreeBSD driver takes the controller over. It is not yet tested on
-hardware; `switchbsd/usb-host-disable` on the SD card returns to build 7 behaviour.
+and a small FreeBSD driver takes the controller over. Keyboard input is now
+user-confirmed on hardware; `switchbsd/usb-host-disable` on the SD card returns
+to build 7 behaviour.
+
+The [Wi-Fi and SSH update](NETWORK-UPDATE.md) adds a TP-Link TL-WN821N v5/v6
+USB Wi-Fi adapter (RTL8192EU, FreeBSD `rtwn`) on the same USB-C port, DHCP and
+an SSH server with key or password login. The network name, Wi-Fi password and
+SSH login go in `boot/loader.conf.d/network.conf` on the SD card, which the
+FreeBSD loader passes to the system. It keeps the build 8 firmware. Wi-Fi is
+not yet tested on hardware; QEMU tests DHCP and SSH on a virtual network card.
+
+The [diagnostic RAM-root update](docs/diagnostics.md) adds `usbconfig`, `devinfo`,
+`diskinfo`, `sha256`, file/paging tools and `switchbsd-report`. At the shell,
+run `switchbsd-report > /tmp/report.txt`, then `less /tmp/report.txt`. Reports
+include build identity, USB/device/storage details and kernel logs. Files in
+`/tmp` disappear on reboot.
 
 The codex root adds the OpenAI Codex CLI (`misc/codex`) with bash, ripgrep,
-git, DHCP networking over USB Ethernet or phone tethering, and NTP time; see
+git, USB Wi-Fi, USB Ethernet or phone tethering, SSH, and NTP time; see
 the [codex root update](CODEX.md). It is a second, larger RAM root selected by
 `boot/loader.conf.local`. Delete that file to boot the small diagnostic root.
-Not yet built on the FreeBSD host or tested on hardware.
+The user confirmed the previous Codex build works on the Switch. This combined
+Codex/Wi-Fi build still needs a physical dongle test.
 
 For the subsequent FreeBSD screen followed by a white rectangle, apply the
 [screen console update](CONSOLE-UPDATE.md). It enables kernel output on both
@@ -94,8 +110,17 @@ the staged programs execute or link go into the codex root.
 - `dist/freebsd-switch-15.1-firmware-update.zip`: small firmware-only update.
 - `dist/freebsd-switch-15.1-console-update.zip`: small screen-console configuration update.
 - `dist/freebsd-switch-15.1-usb-update.zip`: build 8 firmware, kernel and RAM root for the USB keyboard.
-- `dist/freebsd-switch-15.1-codex-update.zip`: the build 8 files plus the codex
-  root, `boot/loader.conf.local`, `CODEX.md` and the package licenses.
+- `dist/freebsd-switch-15.1-codex-update.zip`: the build 8 and Wi-Fi/SSH files
+  plus the Codex root, loader selection, guides and package licenses. Use this
+  ZIP to add Wi-Fi to an existing Codex installation.
+- `dist/freebsd-switch-15.1-diagnostics-update.zip`: diagnostic RAM root and guide for an existing build 8 installation.
+- `dist/freebsd-switch-15.1-network-update.zip`: Wi-Fi/SSH kernel, RAM root, boot entropy,
+  settings template and guide for an existing build 8 installation.
+- Every SD bundle includes `boot/loader.conf.d/network.conf.sample`, never a real
+  `network.conf`, so updates keep the user's network settings.
+- `build/ssh/ssh_host_ed25519_key`: the Switch's SSH host key. It is created on the
+  first build and reused, so the fingerprint stays stable. Its private key is in
+  every RAM root built from it; delete `build/ssh` to replace it.
 - Every ZIP contains `switchbsd/BUILD-TIME.txt` and carries the same UTC build
   time in its archive comment.
 - `dist/freebsd-switch-15.1.img`: standalone MBR/FAT32 disk image.
@@ -128,18 +153,23 @@ Diagnostic shell on /dev/console; type exit to restart it.
 ```
 
 `make smoke` boots a copy using QEMU's own UEFI and PL011 serial device, supplies
-an entropy device, and verifies that a command actually executes in the shell.
-It boots twice: the diagnostic root, then the codex root with a QEMU user-mode
-network. The codex run checks for the DHCP address and runs `codex --version`,
-`rg --version` and `git --version`. Set `QEMU_EFI` to override
-`/usr/local/share/qemu/edk2-aarch64-code.fd`. `QEMU_TIMEOUT` and
-`QEMU_CODEX_TIMEOUT` override the 300-second and 900-second timeouts. QEMU does not
-test the Switch firmware, Tegra drivers, physical UART wiring or the
-Hekate/Coreboot handoff.
+entropy and a virtual USB keyboard, and checks the shell, diagnostic tools,
+report collection and a known SHA-256 result. It also adds a virtual network
+card and a throwaway `network.conf` with Windows line endings, then checks DHCP,
+removal of the passwords from the kernel environment, and SSH key login,
+password login and `scp` from the host against the build's host key.
+Both the diagnostic and Codex roots run these checks. The Codex run also
+executes Codex, ripgrep and Git from the serial shell and over SSH.
+Set `QEMU_EFI` to override `/usr/local/share/qemu/edk2-aarch64-code.fd`, and
+`QEMU_TIMEOUT` / `QEMU_CODEX_TIMEOUT` to override the 300 / 900-second timeouts.
+QEMU does not test the Switch
+firmware, Tegra drivers, USB Wi-Fi, physical UART wiring or the Hekate/Coreboot
+handoff.
 
 The root filesystem is volatile. There is no persistent storage setup,
-Joy-Con input, audio, graphics acceleration or suspend. Only the codex root
-configures a network, and only through a USB adapter.
+Joy-Con input, audio, graphics acceleration or suspend. Networking is limited
+to USB adapters on the USB-C port; the Switch's built-in Wi-Fi (Broadcom on
+PCIe) is not supported.
 Secondary CPU startup is disabled. The diagnostic kernel retains GENERIC
 hardware support; it is not a size-optimized Switch-only kernel.
 

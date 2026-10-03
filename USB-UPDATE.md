@@ -1,9 +1,12 @@
 # USB keyboard update (build 8)
 
 Build 8 adds a USB keyboard at the FreeBSD shell, using a USB-C OTG adapter
-plugged into the console. **It has not been tested on Switch hardware yet.**
+plugged into the console. **The user has confirmed keyboard input on hardware.**
 The keyboard works only in FreeBSD, not on the firmware screen or in the
 FreeBSD loader menu.
+
+For additional inspection tools and a report command on this working build,
+see [the diagnostic RAM-root update](docs/diagnostics.md).
 
 ## What changed
 

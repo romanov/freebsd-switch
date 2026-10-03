@@ -1,0 +1,10 @@
+--- a/freebsd/sys/conf/files.arm64
++++ b/freebsd/sys/conf/files.arm64
+@@ -467,6 +467,7 @@
+ dev/usb/controller/ehci_mv.c			optional ehci_mv fdt
+ dev/usb/controller/generic_ehci.c		optional ehci
+ dev/usb/controller/generic_ehci_acpi.c		optional ehci acpi
++dev/usb/controller/switchbsd_ehci_acpi.c	optional ehci acpi
+ dev/usb/controller/generic_ehci_fdt.c		optional ehci fdt
+ dev/usb/controller/generic_ohci.c		optional ohci fdt
+ dev/usb/controller/generic_usb_if.m		optional ohci fdt

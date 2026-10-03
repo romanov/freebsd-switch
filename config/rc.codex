@@ -12,7 +12,8 @@ export PATH HOME TERM LANG SHELL SSL_CERT_FILE
 mount -t tmpfs -o size=1g,mode=1777 tmpfs /tmp
 mount -t tmpfs -o size=1g,mode=0700 tmpfs /root
 mkdir -p /root/.codex /root/work
-ldconfig /lib /usr/lib /usr/local/lib
+cp /usr/share/switchbsd/*.txt /root/
+ldconfig /lib /usr/lib /usr/local/lib /lib/casper
 ifconfig lo0 inet 127.0.0.1/8 up
 
 # TLS rejects every certificate while the clock reads 1970. Never start
@@ -22,7 +23,12 @@ if [ "$(date +%s)" -lt "$build_epoch" ]; then
     date -f %s "$build_epoch" >/dev/null
 fi
 
-/usr/local/bin/switchbsd-net
+timeout --foreground -k 5s 150s /bin/switchbsd-net start
+if timeout 30 ntpd -qg -c /etc/ntp.conf >/dev/null 2>&1; then
+    echo "Clock: $(date) (NTP)"
+else
+    echo "Clock: $(date) (NTP failed; TLS may reject certificates)"
+fi
 echo "Codex: $(codex --version 2>&1 | head -n 1)"
 echo 'Codex quick start: codex login --device-auth, then cd ~/work and run codex.'
-echo 'After plugging in a network adapter, run switchbsd-net.'
+echo 'After plugging in a network adapter, run switchbsd-net restart.'

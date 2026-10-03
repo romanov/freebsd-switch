@@ -3,7 +3,20 @@
 Builds are numbered by firmware revision. All dates are 2026-10-03; details
 and validation records are in [STATUS.md](STATUS.md).
 
-## Codex root update (unreleased, not yet built or tested on hardware)
+## Codex + Wi-Fi/SSH integration
+
+- Merged Wi-Fi update `441ff78` into the working Codex root, retaining USB
+  Ethernet/tethering, NTP and all diagnostic tools.
+- The Codex update ZIP now carries the network template, entropy seed, Wi-Fi
+  firmware notices and network guide, preserving existing network settings.
+- Both roots share Wi-Fi/SSH setup. Codex mounts `/root` before installing
+  authorized keys, and its tools are available in SSH sessions.
+- QEMU checks both roots for diagnostics, DHCP, SSH key/password login and
+  SFTP copying, plus Codex/Git/ripgrep over serial and SSH in the Codex root.
+- Previous Codex build: user-confirmed working on the Switch. Combined Wi-Fi
+  hardware testing remains pending.
+
+## Original Codex root update
 
 The firmware is unchanged from build 8, so there is no new build number.
 
@@ -41,7 +54,62 @@ The firmware is unchanged from build 8, so there is no new build number.
 - `validate.py` checks that the codex root is self-contained (libraries,
   symlinks, AArch64 ELF), its gzip copy, the loader setting and the new ZIP.
 
-## Build 8 — USB keyboard for the FreeBSD shell (unreleased, untested on hardware)
+## Diagnostic image revision 2 — Wi-Fi and SSH (build 8 firmware retained)
+
+Not yet tested on Switch hardware. The FreeBSD build, validation and QEMU
+smoke run are pending on the build host.
+
+### Added
+- USB Wi-Fi for the TP-Link TL-WN821N v5/v6 (RTL8192EU): the 802.11 stack,
+  WEP/CCMP/TKIP, `rtwn`, `rtwn_usb` and the Realtek firmware are built into
+  SWITCHDIAG.
+- `switchbsd-net start|stop|restart|status|scan` (`config/switchbsd-net`):
+  - Settings come from `boot/loader.conf.d/network.conf` through the loader:
+    `switchbsd.wifi.ssid`, `.psk`, `.country`, `switchbsd.ssh.key*` and
+    `switchbsd.ssh.password`.
+  - It joins Wi-Fi with `wpa_supplicant`, runs DHCP on Wi-Fi and wired
+    interfaces, and starts sshd.
+  - Passwords are removed from the kernel environment once applied, and every
+    wait has a time limit.
+- OpenSSH `sshd` with `sftp-server`, `wpa_supplicant`/`wpa_cli`, and `pw`,
+  `pwd_mkdb`, `arp` and `chown`, copied with the run-time linker and their
+  shared libraries. Rescue `route`, `ping`, `dhclient`, `pkill` and `pgrep`,
+  with `/sbin` aliases.
+- SSH host key generated once on the build host (`build/ssh/`), with its
+  fingerprint shown at boot and recorded in the build identity.
+- `boot/entropy`, a new random seed with every build.
+- `dist/freebsd-switch-15.1-network-update.zip`, `NETWORK-UPDATE.md` and
+  `boot/loader.conf.d/network.conf.sample`.
+- `switchbsd-report` includes `switchbsd-net status`.
+- Tests:
+  - `tests/test_network.py` for the settings handling, secret removal, time
+    limits and status output;
+  - ELF dependency, library closure, ownership spec and SSH fingerprint tests;
+  - QEMU smoke checks for DHCP, a CRLF settings file, secret removal, and SSH
+    key/password login and `scp` against the build's host key.
+
+### Changed
+- RAM-root files are owned by root:wheel. `makefs` gets an mtree spec instead
+  of recording the build user's IDs.
+- `/etc/rc` shows the USB Wi-Fi adapter and starts networking before the
+  shell, under a 150 s backstop. The banner reads "diagnostic image revision 2".
+- `make doctor` also requires `ssh`, `scp`, `ssh-keygen` and `pwd_mkdb`.
+
+## Diagnostic image revision 1 — build 8 firmware retained
+
+- Static ARM64 `usbconfig`, `devinfo`, `diskinfo`, `sha256` and `timeout` tools.
+- Rescue applets for device/storage inspection, file management and paging.
+- `switchbsd-report` collects build identity, USB/devices, storage, settings
+  and kernel logs with per-command timeouts and failure reporting.
+- Build identity embedded in the RAM root; RAM-root-only diagnostic update ZIP
+  and usage guide, also included in the full image.
+- QEMU smoke coverage for diagnostic tools, report completion and SHA-256.
+- Fixed the Clang unused-function error in the I2C test harness.
+
+## Build 8 — USB keyboard for the FreeBSD shell (user-confirmed on hardware)
+
+The user reports that the keyboard works. The local working distribution is
+preserved in `build/hardware-keyboard-2026-10-03/` before the diagnostic update.
 
 ### Added
 - Firmware USB-C host setup in the boot manager (`config/switchbsd-usb-host.c`).

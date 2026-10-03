@@ -35,8 +35,18 @@ under the BSD-2-Clause license below. Firmware templates carry their own SPDX no
 templates are GPL-2.0-only, the SD driver replacements are GPL-2.0-or-later,
 and the diagnostic boot-manager code and status headers are BSD-2-Clause. The
 USB host and I2C templates (`switchbsd-usb-host.c`, `switchbsd-i2c.c`) port
-Hekate code and are GPL-2.0-only. The FreeBSD driver `switchbsd-ehci-acpi.c` is
-BSD-2-Clause. Generated patches retain the licensing of the upstream files they modify.
+Hekate code and are GPL-2.0-only. The FreeBSD driver `switchbsd-ehci-acpi.c` and
+the network script `switchbsd-net` are BSD-2-Clause. Generated patches retain the
+licensing of the upstream files they modify.
+
+The Wi-Fi and SSH update redistributes binaries with their own notices, which
+are copied to `switchbsd/licenses/` in the SD bundle and the network update ZIP:
+
+| Component | Notice in sources |
+| --- | --- |
+| Realtek `rtwn` firmware, compiled into the kernel (binary redistribution only; no reverse engineering) | `sources/freebsd/sys/contrib/dev/rtwn/LICENSE` |
+| wpa_supplicant (BSD) | `sources/freebsd/contrib/wpa/COPYING` |
+| OpenSSH | `sources/freebsd/crypto/openssh/LICENCE` |
 
 Copyright (c) 2026, SwitchBSD experiment contributors
 All rights reserved.

@@ -14,7 +14,7 @@ import shutil
 import struct
 import subprocess
 import time
-from build import ROOT, BUILD, run, digest, copy, stage_base_root
+from build import ROOT, BUILD, run, digest, copy, stage_base_root, ownership_spec
 
 PKG = ROOT / "cache/packages"
 PKGROOT = BUILD / "pkgroot"
@@ -22,7 +22,7 @@ CODEX_ROOT = BUILD / "root-codex"
 CODEX_UFS = BUILD / "rootfs-codex.ufs"
 LOADER_ROOT_NAME = "/boot/rootfs-codex.ufs"
 # rtld's default path is /lib:/usr/lib; rc.codex adds /usr/local/lib with ldconfig.
-LIBRARY_DIRS = ("lib", "usr/lib", "usr/local/lib")
+LIBRARY_DIRS = ("lib", "usr/lib", "usr/local/lib", "lib/casper")
 SKIP = ("usr/local/share/doc", "usr/local/share/man", "usr/local/man", "usr/local/share/locale",
         "usr/local/share/info", "usr/local/share/examples", "usr/local/share/bash-completion",
         "usr/local/share/zsh", "usr/local/share/fish", "usr/local/etc/bash_completion.d",
@@ -340,6 +340,7 @@ def tools():
 def link_rescue(root, world):
     copy(world / "rescue/dhclient-script", root / "rescue/dhclient-script")
     (root / "rescue/dhclient-script").chmod(0o555)
+    (root / "sbin/dhclient-script").unlink(missing_ok=True)
     (root / "sbin/dhclient-script").symlink_to("../rescue/dhclient-script")
     for directory, names in RESCUE_LINKS.items():
         (root / directory).mkdir(parents=True, exist_ok=True)
@@ -349,11 +350,16 @@ def link_rescue(root, world):
             if not (root / "rescue" / name).exists():
                 os.link(root / "rescue/rescue", root / "rescue" / name)
             target = posixpath.relpath(f"rescue/{name}", directory)
-            (root / directory / name).symlink_to(target)
+            link = root / directory / name
+            if not (link.exists() or link.is_symlink()):
+                link.symlink_to(target)
 
 
 def stage_etc(root, world):
     for name in ETC_FILES:
+        # Keep the shared root's SSH/DHCP users and password databases.
+        if (root / name).exists():
+            continue
         if not (world / name).exists():
             raise RuntimeError(f"Missing {name} in staged world; rerun make freebsd (installworld and distribution)")
         copy_file(world / name, root / name, {})
@@ -393,8 +399,12 @@ def stage_codex_root(root, world, manifest):
             raise RuntimeError(f"Missing base tool in staged world: {relative}; see config/codex-tools.txt")
         copy_file(world / relative, root / relative, world_inodes)
     link_rescue(root, world)
-    copy(ROOT / "config/switchbsd-net", root / "usr/local/bin/switchbsd-net")
-    (root / "usr/local/bin/switchbsd-net").chmod(0o555)
+    (root / "usr/local/bin/switchbsd-net").symlink_to("../../../bin/switchbsd-net")
+    # /root becomes tmpfs at boot; retain copies of the on-device guides.
+    for name in ("DIAGNOSTICS.txt", "NETWORK.txt"):
+        copy(root / "root" / name, root / "usr/share/switchbsd" / name)
+    login = root / "etc/login.conf"
+    login.write_text(login.read_text().replace(":path=/bin", ":path=/usr/local/bin /bin"))
     stage_etc(root, world)
     sources = [trees[name] for name in trees] + [world]
     used = resolve_closure(root, sources)
@@ -419,18 +429,20 @@ def tree_size(root):
     return total
 
 
-def assemble_codex_root(sd):
+def assemble_codex_root(sd, build_time=None):
     """Stage build/root-codex, write its UFS image and put the gzip copy on the SD bundle."""
     world = BUILD / "world"
     manifest = fetch_packages()
     if CODEX_ROOT.exists():
         shutil.rmtree(CODEX_ROOT)
-    stage_base_root(CODEX_ROOT)
+    stage_base_root(CODEX_ROOT, build_time)
     names = stage_codex_root(CODEX_ROOT, world, manifest)
     # Headroom for UFS metadata; codex sessions and /tmp live on tmpfs instead.
     mib = 2 ** 20
     size = -(-int(tree_size(CODEX_ROOT) * 1.1 + 96 * mib) // (16 * mib)) * 16
-    run(["makefs", "-t", "ffs", "-B", "little", "-s", f"{size}m", "-o", "version=2",
+    spec = BUILD / "rootfs-codex.mtree"
+    spec.write_text(ownership_spec(CODEX_ROOT))
+    run(["makefs", "-t", "ffs", "-B", "little", "-s", f"{size}m", "-o", "version=2", "-F", spec,
          CODEX_UFS, CODEX_ROOT], log="rootfs-codex.log")
     target = sd / "boot/rootfs-codex.ufs.gz"
     target.parent.mkdir(parents=True, exist_ok=True)

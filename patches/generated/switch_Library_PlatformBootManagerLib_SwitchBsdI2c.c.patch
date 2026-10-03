@@ -1,0 +1,214 @@
+--- a/switch/Library/PlatformBootManagerLib/SwitchBsdI2c.c
++++ b/switch/Library/PlatformBootManagerLib/SwitchBsdI2c.c
+@@ -0,0 +1,211 @@
++/* SPDX-License-Identifier: GPL-2.0-only
++ * Bounded I2C1 master for the SwitchBSD USB power setup. Ported from the
++ * pinned Hekate bdk/soc/i2c.c (normal-mode writes, packet-mode reads with a
++ * repeated start), bdk/soc/clock.c clock_enable() and pinmux_config_i2c().
++ * Unlike the package I2cLib, every wait has a limit.
++ */
++#ifndef SWITCHBSD_HOST_TEST
++#include <Uefi.h>
++#include <Library/IoLib.h>
++#include <Library/TimerLib.h>
++#include "SwitchBsdUsbHost.h"
++#endif
++
++#define SWITCHBSD_CAR_BASE    0x60006000u
++#define SWITCHBSD_PINMUX_BASE 0x70003000u
++#define SWITCHBSD_I2C1_BASE   0x7000C000u
++
++#define CAR_RST_DEVICES_L     0x004
++#define CAR_CLK_SOURCE_I2C1   0x124
++#define CAR_RST_DEV_L_SET     0x300
++#define CAR_RST_DEV_L_CLR     0x304
++#define CAR_CLK_ENB_L_SET     0x320
++#define CAR_CLK_ENB_L_CLR     0x324
++#define CAR_L_I2C1            (1u << 12)
++
++#define PINMUX_GEN1_I2C_SCL   0xBC
++#define PINMUX_GEN1_I2C_SDA   0xC0
++#define PINMUX_INPUT_ENABLE   (1u << 6)
++
++#define I2C_CNFG              0x00
++#define  I2C_CMD1_READ        (1u << 6)
++#define  I2C_NORMAL_MODE_GO   (1u << 9)
++#define  I2C_PACKET_MODE_GO   (1u << 10)
++#define  I2C_NEW_MASTER_FSM   (1u << 11)
++#define  I2C_DEBOUNCE_CNT_4T  (2u << 12)
++#define I2C_CMD_ADDR0         0x04
++#define I2C_CMD_DATA1         0x0C
++#define I2C_CMD_DATA2         0x10
++#define I2C_STATUS            0x1C
++#define  I2C_STATUS_NOACK     0xFu
++#define  I2C_STATUS_BUSY      (1u << 8)
++#define I2C_TX_FIFO           0x50
++#define I2C_RX_FIFO           0x54
++#define I2C_PACKET_STATUS     0x58
++#define I2C_FIFO_CONTROL      0x5C
++#define  I2C_FIFO_FLUSH       0x3u
++#define I2C_FIFO_STATUS       0x60
++#define  I2C_RX_FIFO_FULL_CNT 0xFu
++#define I2C_INT_STATUS        0x68
++#define  I2C_BUS_CLEAR_DONE   (1u << 11)
++#define I2C_CLK_DIVISOR       0x6C
++#define I2C_BUS_CLEAR_CONFIG  0x84
++#define I2C_BUS_CLEAR_STATUS  0x88
++#define I2C_CONFIG_LOAD       0x8C
++#define  I2C_MSTR_CONFIG_LOAD 0x1u
++
++#define I2C_PACKET_PROT_I2C   (1u << 4)
++#define I2C_HEADER_REP_START  (1u << 16)
++#define I2C_HEADER_READ       (1u << 19)
++
++/* Hekate allows 100 ms for a normal transfer and 200 ms per packet phase. */
++#define I2C_TRANSFER_POLLS    100000u
++#define I2C_PACKET_POLLS      200000u
++
++STATIC UINT32
++SwitchBsdI2cReg(UINT32 Offset)
++{
++    return MmioRead32(SWITCHBSD_I2C1_BASE + Offset);
++}
++
++STATIC VOID
++SwitchBsdI2cSet(UINT32 Offset, UINT32 Value)
++{
++    MmioWrite32(SWITCHBSD_I2C1_BASE + Offset, Value);
++}
++
++STATIC VOID
++SwitchBsdI2cLoadConfig(VOID)
++{
++    UINT32 Index;
++
++    SwitchBsdI2cSet(I2C_CONFIG_LOAD, (1u << 5) | (1u << 2) | I2C_MSTR_CONFIG_LOAD);
++    for (Index = 0; Index < 20; Index++) {
++        if (!(SwitchBsdI2cReg(I2C_CONFIG_LOAD) & I2C_MSTR_CONFIG_LOAD))
++            break;
++        MicroSecondDelay(1);
++    }
++}
++
++STATIC VOID
++SwitchBsdI2cStopPacket(VOID)
++{
++    MicroSecondDelay(20);
++    SwitchBsdI2cSet(I2C_CNFG, SwitchBsdI2cReg(I2C_CNFG) &
++                              ~(I2C_PACKET_MODE_GO | I2C_NORMAL_MODE_GO));
++}
++
++INTN
++SwitchBsdI2cSetup(VOID)
++{
++    UINT32 Index;
++
++    MmioWrite32(SWITCHBSD_PINMUX_BASE + PINMUX_GEN1_I2C_SCL, PINMUX_INPUT_ENABLE);
++    MmioWrite32(SWITCHBSD_PINMUX_BASE + PINMUX_GEN1_I2C_SDA, PINMUX_INPUT_ENABLE);
++
++    // CLK_M source divided to 4.8 MHz, giving a 100 kHz bus.
++    MmioWrite32(SWITCHBSD_CAR_BASE + CAR_RST_DEV_L_SET, CAR_L_I2C1);
++    MmioWrite32(SWITCHBSD_CAR_BASE + CAR_CLK_ENB_L_CLR, CAR_L_I2C1);
++    MmioWrite32(SWITCHBSD_CAR_BASE + CAR_CLK_SOURCE_I2C1, (6u << 29) | 3);
++    MmioWrite32(SWITCHBSD_CAR_BASE + CAR_CLK_ENB_L_SET, CAR_L_I2C1);
++    MicroSecondDelay(2);
++    MmioWrite32(SWITCHBSD_CAR_BASE + CAR_RST_DEV_L_CLR, CAR_L_I2C1);
++    (VOID)MmioRead32(SWITCHBSD_CAR_BASE + CAR_RST_DEVICES_L);
++
++    SwitchBsdI2cSet(I2C_CLK_DIVISOR, (5u << 16) | 1);
++    SwitchBsdI2cSet(I2C_BUS_CLEAR_CONFIG, (9u << 16) | 0x3);
++    SwitchBsdI2cLoadConfig();
++    for (Index = 0; Index < 10; Index++) {
++        if (SwitchBsdI2cReg(I2C_INT_STATUS) & I2C_BUS_CLEAR_DONE)
++            break;
++        MicroSecondDelay(25);
++    }
++    (VOID)SwitchBsdI2cReg(I2C_BUS_CLEAR_STATUS);
++    SwitchBsdI2cSet(I2C_INT_STATUS, SwitchBsdI2cReg(I2C_INT_STATUS));
++    return 0;
++}
++
++INTN
++SwitchBsdI2cWrite(UINT32 Device, UINT32 Register, CONST UINT8 *Buffer, UINT32 Size)
++{
++    UINT32 Data[2] = { 0, 0 };
++    UINT32 Count = Size + 1;
++    UINT32 Index;
++
++    if (Size > 7 || (Size != 0 && Buffer == NULL))
++        return 1;
++    Data[0] = Register & 0xFF;
++    for (Index = 1; Index < Count; Index++)
++        Data[Index / 4] |= (UINT32)Buffer[Index - 1] << (8 * (Index % 4));
++
++    SwitchBsdI2cSet(I2C_CMD_ADDR0, Device << 1);
++    SwitchBsdI2cSet(I2C_CMD_DATA1, Data[0]);
++    if (Count > 4)
++        SwitchBsdI2cSet(I2C_CMD_DATA2, Data[1]);
++    SwitchBsdI2cSet(I2C_CNFG, ((Count - 1) << 1) | I2C_DEBOUNCE_CNT_4T | I2C_NEW_MASTER_FSM);
++    SwitchBsdI2cLoadConfig();
++    SwitchBsdI2cSet(I2C_CNFG, SwitchBsdI2cReg(I2C_CNFG) | I2C_NORMAL_MODE_GO);
++
++    for (Index = 0; SwitchBsdI2cReg(I2C_STATUS) & I2C_STATUS_BUSY; Index++) {
++        if (Index == I2C_TRANSFER_POLLS)
++            return 1;
++        MicroSecondDelay(1);
++    }
++    return (SwitchBsdI2cReg(I2C_STATUS) & I2C_STATUS_NOACK) ? 1 : 0;
++}
++
++INTN
++SwitchBsdI2cRead(UINT32 Device, UINT32 Register, UINT8 *Buffer, UINT32 Size)
++{
++    UINT32 Done = 0;
++    UINT32 Index;
++    UINT32 Byte;
++    UINT32 Word;
++    INTN Result = 0;
++
++    if (Size == 0 || Size > 8 || Buffer == NULL)
++        return 1;
++
++    SwitchBsdI2cSet(I2C_CMD_ADDR0, (Device << 1) | 1);
++    SwitchBsdI2cSet(I2C_CNFG, I2C_DEBOUNCE_CNT_4T | I2C_NEW_MASTER_FSM | I2C_CMD1_READ);
++    SwitchBsdI2cSet(I2C_FIFO_CONTROL, I2C_FIFO_FLUSH);
++    SwitchBsdI2cLoadConfig();
++    SwitchBsdI2cSet(I2C_CNFG, (SwitchBsdI2cReg(I2C_CNFG) & ~I2C_NORMAL_MODE_GO) | I2C_PACKET_MODE_GO);
++
++    // Register address, then a repeated start for the read.
++    SwitchBsdI2cSet(I2C_TX_FIFO, I2C_PACKET_PROT_I2C);
++    SwitchBsdI2cSet(I2C_TX_FIFO, 0);
++    SwitchBsdI2cSet(I2C_TX_FIFO, I2C_HEADER_REP_START | (Device << 1));
++    SwitchBsdI2cSet(I2C_TX_FIFO, Register & 0xFF);
++    for (Index = 0; (SwitchBsdI2cReg(I2C_PACKET_STATUS) >> 4) & 0xFFF; Index++) {
++        if (Index == I2C_PACKET_POLLS) {
++            Result = 1;
++            goto out;
++        }
++        MicroSecondDelay(1);
++    }
++
++    SwitchBsdI2cSet(I2C_TX_FIFO, I2C_PACKET_PROT_I2C);
++    SwitchBsdI2cSet(I2C_TX_FIFO, Size - 1);
++    SwitchBsdI2cSet(I2C_TX_FIFO, I2C_HEADER_READ | (Device << 1));
++    for (Index = 0; Done < Size; Index++) {
++        if (SwitchBsdI2cReg(I2C_FIFO_STATUS) & I2C_RX_FIFO_FULL_CNT) {
++            // Each FIFO word carries up to four bytes, least significant first.
++            Word = SwitchBsdI2cReg(I2C_RX_FIFO);
++            for (Byte = 0; Byte < 4 && Done < Size; Byte++, Done++)
++                Buffer[Done] = (UINT8)(Word >> (8 * Byte));
++            continue;
++        }
++        if (Index == I2C_PACKET_POLLS) {
++            Result = 1;
++            break;
++        }
++        MicroSecondDelay(1);
++    }
++
++out:
++    if (SwitchBsdI2cReg(I2C_STATUS) & I2C_STATUS_NOACK)
++        Result = 1;
++    SwitchBsdI2cStopPacket();
++    return Result;
++}

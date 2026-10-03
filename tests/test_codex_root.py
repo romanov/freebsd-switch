@@ -69,7 +69,7 @@ class ElfDynamic(unittest.TestCase):
 
     def test_origin_runpath_searched_first(self):
         self.assertEqual(search_dirs("usr/local/bin/app", ["$ORIGIN/../lib/extra"]),
-                         ["usr/local/lib/extra", "lib", "usr/lib", "usr/local/lib"])
+                         ["usr/local/lib/extra", "lib", "usr/lib", "usr/local/lib", "lib/casper"])
 
 
 class Closure(unittest.TestCase):
@@ -122,6 +122,23 @@ class Closure(unittest.TestCase):
 
 
 class CopyTree(unittest.TestCase):
+    def test_codex_rescue_aliases_preserve_network_programs(self):
+        with tempfile.TemporaryDirectory() as d:
+            world, root = Path(d) / "world", Path(d) / "root"
+            put(root / "rescue/rescue", elf(dynamic=False))
+            put(root / "sbin/dhclient-script", b"old script")
+            put(world / "rescue/dhclient-script", b"new script")
+            for names in codex_root.RESCUE_LINKS.values():
+                for name in names:
+                    put(world / "rescue" / name)
+            network_chown = elf(["libc.so.7"])
+            put(root / "usr/sbin/chown", network_chown)
+            codex_root.link_rescue(root, world)
+            self.assertFalse((root / "usr/sbin/chown").is_symlink())
+            self.assertEqual((root / "usr/sbin/chown").read_bytes(), network_chown)
+            self.assertEqual((root / "sbin/dhclient-script").read_bytes(), b"new script")
+            self.assertEqual(broken_links(root), [])
+
     def test_hard_links_kept_and_docs_skipped(self):
         with tempfile.TemporaryDirectory() as d:
             source, target = Path(d) / "pkg", Path(d) / "root"

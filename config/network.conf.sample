@@ -1,0 +1,31 @@
+# SwitchBSD network settings.
+#
+# Copy this file to network.conf in this folder (boot/loader.conf.d/ on the
+# SD card) and edit the copy. The FreeBSD loader reads only files whose names
+# end in .conf, so this sample is ignored. Updates never replace network.conf.
+#
+# Rules:
+# - Keep each value in double quotes. A value cannot contain a double quote.
+# - Put a backslash before a $ or \ in a value: pa$$word -> pa\$\$word
+# - Values must be shorter than 128 characters.
+# - Remove the # at the start of a line to use it.
+#
+# Settings are applied once per boot; the Wi-Fi password and the SSH password
+# are then removed from the kernel environment. See switchbsd/NETWORK-UPDATE.md.
+
+# Wi-Fi network name and password (2.4 GHz, WPA2 or open).
+# Leave out switchbsd.wifi.psk for an open network.
+#switchbsd.wifi.ssid="MyNetwork"
+#switchbsd.wifi.psk="my Wi-Fi password"
+
+# Optional two-letter country code, in capitals, for local channel rules
+# (needed for channels 12 and 13 outside North America).
+#switchbsd.wifi.country="DE"
+
+# SSH public key for root: the whole line of an ed25519 .pub file, e.g.
+# C:\Users\you\.ssh\id_ed25519.pub. Shorten the comment at the end if the
+# line is 128 characters or longer. Add more keys as switchbsd.ssh.key2, key3...
+#switchbsd.ssh.key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... you@pc"
+
+# SSH password for root. It is stored on the SD card in plain text.
+#switchbsd.ssh.password="choose a long password"

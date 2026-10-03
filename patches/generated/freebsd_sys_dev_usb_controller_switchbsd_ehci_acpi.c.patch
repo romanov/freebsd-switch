@@ -1,0 +1,95 @@
+--- a/freebsd/sys/dev/usb/controller/switchbsd_ehci_acpi.c
++++ b/freebsd/sys/dev/usb/controller/switchbsd_ehci_acpi.c
+@@ -0,0 +1,92 @@
++/*-
++ * SPDX-License-Identifier: BSD-2-Clause
++ *
++ * Copyright (c) 2026, SwitchBSD experiment contributors
++ */
++
++/*
++ * Tegra210 USB1 (ChipIdea) EHCI controller on the Switch USB-C port. The
++ * SwitchBSD firmware powers the port, starts the UTMI PHY, selects host mode
++ * and only then exposes SWBS0001 in the DSDT. This driver reuses the generic
++ * EHCI attachment and adds the quirks from arm/nvidia/tegra_ehci.c: an
++ * integrated transaction translator, port speed from HOSTPC1_DEVLC, and host
++ * mode restored after any controller reset.
++ */
++
++#include "opt_bus.h"
++
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/bus.h>
++#include <sys/condvar.h>
++#include <sys/kernel.h>
++#include <sys/module.h>
++
++#include <dev/usb/usb.h>
++#include <dev/usb/usbdi.h>
++
++#include <dev/usb/usb_core.h>
++#include <dev/usb/usb_busdma.h>
++#include <dev/usb/usb_process.h>
++
++#include <dev/usb/usb_controller.h>
++#include <dev/usb/usb_bus.h>
++#include <dev/usb/controller/ehci.h>
++#include <dev/usb/controller/ehcireg.h>
++
++#include <contrib/dev/acpica/include/acpi.h>
++#include <contrib/dev/acpica/include/accommon.h>
++#include <dev/acpica/acpivar.h>
++
++#include "generic_ehci.h"
++
++static void
++switchbsd_ehci_post_reset(struct ehci_softc *sc)
++{
++	uint32_t usbmode;
++
++	/* A controller reset returns the ChipIdea core to idle mode. */
++	usbmode = EOREAD4(sc, EHCI_USBMODE_LPM);
++	usbmode &= ~EHCI_UM_CM;
++	usbmode |= EHCI_UM_CM_HOST;
++	EOWRITE4(sc, EHCI_USBMODE_LPM, usbmode);
++}
++
++static int
++switchbsd_ehci_probe(device_t dev)
++{
++	ACPI_HANDLE h;
++
++	if ((h = acpi_get_handle(dev)) == NULL ||
++	    !acpi_MatchHid(h, "SWBS0001"))
++		return (ENXIO);
++
++	device_set_desc(dev, "SwitchBSD Tegra210 EHCI controller");
++	return (BUS_PROBE_SPECIFIC);
++}
++
++static int
++switchbsd_ehci_attach(device_t dev)
++{
++	ehci_softc_t *sc = device_get_softc(dev);
++
++	/* generic_ehci_attach() only adds EHCI_SCFLG_DONTRESET to these. */
++	sc->sc_flags |= EHCI_SCFLG_TT | EHCI_SCFLG_NORESTERM;
++	sc->sc_vendor_post_reset = switchbsd_ehci_post_reset;
++	sc->sc_vendor_get_port_speed = ehci_get_port_speed_hostc;
++	return (generic_ehci_attach(dev));
++}
++
++static device_method_t switchbsd_ehci_methods[] = {
++	/* Device interface */
++	DEVMETHOD(device_probe,		switchbsd_ehci_probe),
++	DEVMETHOD(device_attach,	switchbsd_ehci_attach),
++
++	DEVMETHOD_END
++};
++
++DEFINE_CLASS_1(ehci, switchbsd_ehci_driver, switchbsd_ehci_methods,
++    sizeof(ehci_softc_t), generic_ehci_driver);
++
++DRIVER_MODULE(switchbsd_ehci, acpi, switchbsd_ehci_driver, 0, 0);
++MODULE_DEPEND(switchbsd_ehci, usb, 1, 1, 1);
