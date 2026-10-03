@@ -17,8 +17,9 @@ remains unverified. See [the hardware boot record](docs/hardware-boot-2026-10-03
    replacing `boot/loader.conf`.
 4. Boot **More Configs → FreeBSD 15.1 experiment** again.
 
-The firmware identifies itself as **SD diagnostic build 7 (USB host disabled)**. This update
-changes the loader configuration, so no firmware or kernel replacement is needed.
+The firmware identifies itself as **SD diagnostic build 7 (USB host disabled)**, or
+**build 8 (USB host for FreeBSD)** after the [USB keyboard update](USB-UPDATE.md).
+This update changes the loader configuration, so no firmware or kernel replacement is needed.
 
 ## Expected result
 
@@ -26,7 +27,8 @@ Kernel messages should appear on the screen and UART. The screen becomes the
 primary console, so the RAM-root startup messages and shell should appear there
 if userland is reached. The screen may be sideways because the firmware exports
 the panel's native portrait framebuffer. USB keyboard input is disabled in build
-7 so the display recovery can be tested independently.
+7 so the display recovery can be tested independently. With build 8 and its
+kernel, a USB keyboard on a USB-C OTG adapter types into this screen console.
 
 If it stops, capture the last visible text or the rectangle's position and size.
 The change addresses a console-selection mismatch; it does not establish that

@@ -41,6 +41,7 @@ clock and carveout setup still needs physical hardware validation.
 | Pre-RAM console | `0x40026000` | 4 KiB |
 | Pre-RAM CBFS cache | `0x40027000` | 92 KiB |
 | Handoff descriptor (old USB bounce area) | `0x4003e000` | 20 bytes |
+| USB ready marker (same area, read by DSDT `USB0._STA`) | `0x4003e020` | 4 bytes |
 | EDK2 firmware volume | `0x80110000` | 896 KiB |
 | Coreboot ramstage | `0x80200000` | 256 KiB |
 | Complete ROM | `0xcf600000` | 10 MiB |
@@ -136,3 +137,86 @@ kernel consoles. UART remains configured for kernel diagnostics; select
 `boot_serial="YES"` for userland and an interactive shell over UART instead.
 The firmware and kernel binaries are unchanged by this update. The blank screen
 could still have another cause; the next hardware screen must establish progress.
+
+## Build 8 USB host for FreeBSD
+
+### Why builds 4–6 failed
+
+Builds 4–6 enabled the package's `EhciPciEmulationDxe`. Source review found
+several faults that could each explain the black screen before the display:
+
+- It never takes UTMIPLL out of IDDQ (`UTMIPLL_HW_PWRDN_CFG0`), which neither
+  Hekate's boot path nor Coreboot clears either.
+- Its `PHY_CLK_VALID` wait ends in `ASSERT_EFI_ERROR`, which in this DEBUG
+  build loops forever before any console exists.
+- It rewrites the whole `PLLU_BASE` register.
+- It drives GPIO CC4 high. That value is copied from Jetson TX1; on the Switch
+  CC4 switches the Joy-Con/fan 5 V rail, not USB VBUS.
+- `UsbKbDxe` was never built, so a UEFI keyboard could not have worked anyway.
+
+### Design
+
+Build 8 leaves every UEFI USB driver out. The boot manager
+(`SwitchBsdUsbHost.c`) runs once a FAT volume with the FreeBSD loader is
+found, before the loader starts and after the screen shows the SD lines.
+
+**VBUS.** A bounded I2C1 driver (`SwitchBsdI2c.c`, ported from Hekate's
+`i2c.c`) reads the BM92T36 identity (`0x4B5`/`0x3B0`). As L4T's
+`bm92t_extcon_cable_set_init_state()` does, it then:
+- re-enables over-current protection;
+- sets `CONFIG1.SPDSRC` to both source switches on;
+- waits 100 ms and reads ALERT, STATUS1 and STATUS2.
+
+Only `STATUS1_SRC_MODE` together with `STATUS2_OTG_INSERT` (an OTG sink, as in
+L4T's plug handler) leads to VBUS. The BQ24193 must report part number `101b`
+and no input on VBUS (`VBUS_STAT` not 1 or 2). The firmware then turns the
+charger's I2C watchdog off and writes `CHG_CONFIG=OTG` with `BOOST_LIM=1`,
+preserving `SYS_MIN` and never writing the reset or kick bits. After 250 ms it
+reads the status and fault registers back. Hekate's `_check_low_battery()`
+restores charge mode on every later Hekate boot.
+
+**PHY and controller.** These follow Hekate's `_usb_init_phy()` and
+`_usbd_reset_usb_otg_phy_device_mode()`, with host-mode differences taken from
+U-Boot's `ehci-tegra.c`:
+- USBD is held in reset while PLLU is set to 480 MHz with its override and
+  output enables, then pulsed.
+- `XUSB_PADCTL` is released from reset. Pad 0 and the bias pad are forced to
+  SNPS (the legacy controller), and the previous value is recorded.
+- UTMIPLL leaves IDDQ and is set to 960 MHz.
+- Fuse calibration and two bias tracking cycles run. `PMC_USB_AO` and the
+  transceiver power-downs are cleared, including the disconnect detector a
+  host needs. The B-session override that device mode uses is cleared, and
+  the charger detector stays powered down.
+- The PHY reset is released and `PHY_CLK_VALID` is awaited. The controller is
+  reset, and `PHY_CLK_VALID` is awaited again.
+- USBMODE is set to host, `HOSTPC1_DEVLC` to the UTMI interface with PHCD
+  clear, TXFILLTUNING to `0x10 << 16`, then port power. The controller stays
+  halted.
+
+Every wait is bounded. A missing PLLU or UTMIPLL lock bit is reported but not
+fatal; the `PHY_CLK_VALID`, controller-reset and host-mode waits are.
+
+**Handover to FreeBSD.** On success the firmware writes `0x55534230` to
+`0x4003e020`. The DSDT device `USB0` (`_HID SWBS0001`, no `_CID`) reads that
+word in `_STA`, so FreeBSD sees the controller only after a complete bring-up.
+The boot manager clears the word on every boot, at the start of a bring-up,
+and when the SD card holds `switchbsd/usb-host-disable`.
+
+`USB0` claims `0x7D000100`–`0x7D0001FF` (the EHCI window that FreeBSD's
+`tegra_ehci.c` also uses) and GSIV 52 (SPI 20), with `_CCA` 0. FreeBSD's
+`switchbsd_ehci_acpi.c` reuses `generic_ehci_attach()`, which does not reset
+the controller. It adds `EHCI_SCFLG_TT | EHCI_SCFLG_NORESTERM`,
+`ehci_get_port_speed_hostc` and a post-reset hook that restores host mode.
+Without the transaction translator flag, `ehci.c` would hand low-speed
+keyboards to a companion controller this chip does not have.
+
+Host tests compile the actual C templates against register and device models.
+They check:
+- the bring-up order;
+- preservation of unrelated CAR, PMC, pad and charger bits;
+- every VBUS refusal path;
+- bounded timeouts and the marker contract;
+- I2C framing and timeouts.
+
+They do not emulate Tegra hardware. The ASL and the FreeBSD driver are only
+compiled on the build host.

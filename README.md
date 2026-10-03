@@ -27,6 +27,12 @@ shutdown and keeps failures visible on screen. Build 7 is the display recovery
 firmware; it leaves the experimental Tegra USB host disabled after the earlier
 USB builds produced a black screen before UEFI.
 
+Build 8 adds a USB keyboard for the FreeBSD shell through a USB-C OTG adapter;
+see the [USB keyboard update](USB-UPDATE.md). The firmware powers the port and
+starts the USB1 controller after the screen is up, without a UEFI USB driver,
+and a small FreeBSD driver takes the controller over. It is not yet tested on
+hardware; `switchbsd/usb-host-disable` on the SD card returns to build 7 behaviour.
+
 For the subsequent FreeBSD screen followed by a white rectangle, apply the
 [screen console update](CONSOLE-UPDATE.md). It enables kernel output on both
 the framebuffer and UART, with the screen primary. Set `boot_serial="YES"` in
@@ -71,6 +77,7 @@ files remain in `cache/originals/`. A second build reuses existing objects.
 - `dist/freebsd-switch-15.1-sd.zip`: files to extract onto a FAT32 SD card.
 - `dist/freebsd-switch-15.1-firmware-update.zip`: small firmware-only update.
 - `dist/freebsd-switch-15.1-console-update.zip`: small screen-console configuration update.
+- `dist/freebsd-switch-15.1-usb-update.zip`: build 8 firmware, kernel and RAM root for the USB keyboard.
 - Every ZIP contains `switchbsd/BUILD-TIME.txt` and carries the same UTC build
   time in its archive comment.
 - `dist/freebsd-switch-15.1.img`: standalone MBR/FAT32 disk image.

@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from build import ROOT, SRC, BUILD, DIST, digest, check_hash
+from build import ROOT, SRC, BUILD, DIST, USB_UPDATE_FILES, digest, check_hash
 
 
 def elf_aarch64(path, static=False):
@@ -85,7 +85,7 @@ def firmware():
             raise RuntimeError("Missing CBFS stage: " + name)
     nonoverlap([(0x40010000, 0x7000, "bootblock"), (0x40017000, 0xf000, "romstage"),
                 (0x40026000, 0x1000, "console"), (0x40027000, 0x17000, "CBFS cache"),
-                (0x4003e000, 20, "handoff")])
+                (0x4003e000, 20, "handoff"), (0x4003e020, 4, "USB ready marker")])
     nonoverlap([(0x80110000, 0xe0000, "UEFI FD"), (0x80200000, 0x40000, "ramstage"),
                 (0xcf600000, 0xa00000, "ROM"), (0xd0000000, 0x800000, "CBFS cache"),
                 (0xdfb80000, 0x480000, "framebuffer"), (0xfec00000, 0x1400000, "TrustZone")])
@@ -168,6 +168,14 @@ def main():
         for name in ("boot/loader.conf", "switchbsd/CONSOLE-UPDATE.md"):
             if archive.read(name) != (sd / name).read_bytes():
                 raise RuntimeError("Console update does not match SD bundle: " + name)
+    with zipfile.ZipFile(DIST / "freebsd-switch-15.1-usb-update.zip") as archive:
+        if archive.testzip() is not None:
+            raise RuntimeError("Corrupt USB update ZIP archive")
+        if archive_build_time(archive) != build_time:
+            raise RuntimeError("ZIP build times do not match")
+        for name in USB_UPDATE_FILES:
+            if archive.read(name) != (sd / name).read_bytes():
+                raise RuntimeError("USB update does not match SD bundle: " + name)
     for line in (DIST / "SHA256SUMS").read_text().splitlines():
         sha, name = line.split("  ", 1)
         check_hash(DIST / name, sha)

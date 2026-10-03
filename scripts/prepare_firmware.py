@@ -56,8 +56,8 @@ def main():
               "\twatchdog_end();\n" + main_text[end + len("skip_lp0_minerva_config:"):])
     replace("switch/NintendoSwitch.dsc", "[LibraryClasses.common]",
             "[LibraryClasses.common]\n  RegisterFilterLib|MdePkg/Library/RegisterFilterLibNull/RegisterFilterLibNull.inf")
-    prepare_usb_host()
     prepare_sd_diagnostics()
+    prepare_usb_host()
     # The payload wrapper is kept within Coreboot's 28 KiB bootblock allocation.
     hook = (ROOT / "config/hekate-handoff.c").read_text()
     # Replace the generated section as a unit so edited templates and reruns
@@ -186,16 +186,34 @@ def prepare_sd_diagnostics():
 def prepare_usb_host():
     # The pinned EHCI port is experimental and can stop EDK2 before the
     # graphics console appears on this hardware. Restore the original source
-    # lists and ACPI table for the known-good display recovery build.
-    for relative in ("switch/NintendoSwitch.dsc",
-                     "switch/NintendoSwitch.fdf",
-                     "switch/AcpiTables/Dsdt/Dsdt.asl"):
+    # lists for the known-good display recovery build: no UEFI USB driver
+    # binds or resets the controller.
+    for relative in ("switch/NintendoSwitch.dsc", "switch/NintendoSwitch.fdf"):
         original = ROOT / "cache/originals" / relative
         if original.exists():
             write(relative, original.read_text())
     # Keep the unrelated EDK2 library-class adaptation made by main().
     replace("switch/NintendoSwitch.dsc", "[LibraryClasses.common]",
             "[LibraryClasses.common]\n  RegisterFilterLib|MdePkg/Library/RegisterFilterLibNull/RegisterFilterLibNull.inf")
+    # Instead, the boot manager powers the USB-C port and starts USB1 for
+    # FreeBSD after the display is up. Runs after prepare_sd_diagnostics().
+    library = "switch/Library/PlatformBootManagerLib/"
+    for name, template in (("SwitchBsdUsbHost.h", "switchbsd-usb-host.h"),
+                           ("SwitchBsdUsbHost.c", "switchbsd-usb-host.c"),
+                           ("SwitchBsdI2c.c", "switchbsd-i2c.c")):
+        write(library + name, (ROOT / "config" / template).read_text())
+    replace(library + "PlatformBootManagerLib.inf", "  SwitchBsdAutoBoot.c\n",
+            "  SwitchBsdAutoBoot.c\n  SwitchBsdUsbHost.h\n  SwitchBsdUsbHost.c\n  SwitchBsdI2c.c\n")
+    replace(library + "PlatformBootManagerLib.inf", "[LibraryClasses]\n  BaseLib\n",
+            "[LibraryClasses]\n  BaseLib\n  IoLib\n  TimerLib\n")
+    # Build the DSDT from the pristine table so reruns leave it untouched.
+    dsdt = "switch/AcpiTables/Dsdt/Dsdt.asl"
+    original = ROOT / "cache/originals" / dsdt
+    text = original.read_text() if original.exists() else (SRC / dsdt).read_text()
+    anchor = "    } // Scope(_SB)"
+    if text.count(anchor) != 1:
+        raise RuntimeError(f"Source drift: {dsdt}: expected one patch anchor")
+    write(dsdt, text.replace(anchor, (ROOT / "config/switchbsd-usb.asl").read_text() + anchor))
 
 
 if __name__ == "__main__":

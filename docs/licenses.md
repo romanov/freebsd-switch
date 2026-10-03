@@ -23,8 +23,10 @@ the applicable terms. Toolchain packages are listed in `build-info.json`.
 New project Python scripts, configuration, tests and documentation are offered
 under the BSD-2-Clause license below. Firmware templates carry their own SPDX notices: the Hekate/Coreboot
 templates are GPL-2.0-only, the SD driver replacements are GPL-2.0-or-later,
-and the diagnostic boot-manager code and status header are BSD-2-Clause. Generated
-patches retain the licensing of the upstream files they modify.
+and the diagnostic boot-manager code and status headers are BSD-2-Clause. The
+USB host and I2C templates (`switchbsd-usb-host.c`, `switchbsd-i2c.c`) port
+Hekate code and are GPL-2.0-only. The FreeBSD driver `switchbsd-ehci-acpi.c` is
+BSD-2-Clause. Generated patches retain the licensing of the upstream files they modify.
 
 Copyright (c) 2026, SwitchBSD experiment contributors
 All rights reserved.

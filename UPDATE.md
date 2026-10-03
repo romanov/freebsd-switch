@@ -1,4 +1,4 @@
-# SD power recovery firmware update (build 7)
+# SD power recovery firmware update (build 8)
 
 The build 2 photo shows SD card negotiation failing at stage 5 with result
 `-95`, before any block device or filesystem is available. Build 3 restores
@@ -6,6 +6,9 @@ the SDMMC1 I/O pad power disabled by Hekate during handoff. This is a likely
 cause found in the source; the fix still needs a Switch hardware test. Build 7
 returns to the last display-tested firmware path and leaves the experimental
 USB host driver disabled. This is the recovery build for the black screen.
+Build 8 keeps that path and adds the USB-C host setup for FreeBSD described in
+[the USB keyboard update](USB-UPDATE.md); the keyboard also needs that update's
+kernel and RAM root.
 
 ## Apply from your computer
 
@@ -23,7 +26,7 @@ the card's filesystem would not resolve this particular initialization failure.
 
 ## Expected screen
 
-The firmware displays **SwitchBSD SD diagnostic build 7 (USB host disabled)**, with these lines:
+The firmware displays **SwitchBSD SD diagnostic build 8 (USB host for FreeBSD)**, with these lines:
 
 - Pin control / Peripheral clocks / SD clocks / Power controller
 - SD stage / SD status / Card result
@@ -41,9 +44,10 @@ The SDMMC1 bit (`0x00001000`) should be clear in the second NO_IOPOWER value
 and set in PWR_DET. Other bits belong to other domains and are preserved.
 The response register can contain an earlier response after a command error.
 
-USB host input is intentionally disabled in this recovery build. Use the
-keyboard-free boot path to confirm the display and FreeBSD launch screen return.
-UART remains available as a fallback.
+Before launching the loader, build 8 also prints its USB host lines and waits
+5 s; see [the USB keyboard update](USB-UPDATE.md). The firmware still binds no
+UEFI USB driver, so the firmware screen accepts UART input only. An empty
+`switchbsd/usb-host-disable` file on the card skips the USB setup.
 
 ## What changed
 

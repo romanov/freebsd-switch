@@ -178,3 +178,50 @@ at the final `#` prompt with the keyboard connected before boot.
 The user reports that build 7 again reaches the FreeBSD userland shell on the
 Switch display. This confirms the USB-host rollback restores the earlier boot
 milestone. Keyboard input and a manually entered command remain unverified.
+
+## USB keyboard build 8 — source only, 2026-10-03
+
+Goal: a USB keyboard on a USB-C OTG adapter, at the FreeBSD shell only.
+
+Source review of builds 4–6 found several plausible black-screen causes in
+`EhciPciEmulationDxe`:
+- UTMIPLL is never taken out of IDDQ;
+- an `ASSERT_EFI_ERROR` on the PHY clock timeout hangs a DEBUG build before
+  any console exists;
+- `PLLU_BASE` is rewritten;
+- GPIO CC4 is driven, which is the Joy-Con/fan 5 V rail on this console.
+
+Nothing powered VBUS, and `UsbKbDxe` was never built. See `docs/firmware.md`.
+
+Build 8 binds no UEFI USB driver. The boot manager does the setup late,
+after the screen is up:
+- it checks the BM92T36 for an OTG sink;
+- it switches the BQ24193 to OTG boost after identity and input-power checks;
+- it brings up the USB1 UTMI PHY and EHCI controller in host mode, following
+  Hekate's sequence. Every wait is bounded.
+
+On success it writes a ready marker in IRAM. The DSDT's `SWBS0001` device
+reads that marker in `_STA`, so FreeBSD only sees a fully initialized
+controller. A new kernel driver, `switchbsd_ehci_acpi`, adds the Tegra EHCI
+quirks to the generic attachment. `/etc/rc` reports the controller and the
+keyboard. `switchbsd/usb-host-disable` on the SD card skips everything.
+
+Delivery is `dist/freebsd-switch-15.1-usb-update.zip`: firmware, kernel and
+RAM root. See `USB-UPDATE.md`.
+
+Validation so far, on a Windows checkout without the pinned build:
+- 14 host tests pass, including two new ones. They compile the actual USB host
+  and I2C templates against register and device models.
+- Both templates compile cleanly with `-Wextra -Wconversion`.
+- A dry run of `prepare_firmware.py` against the pinned upstream files applies
+  every anchor, and a rerun changes nothing.
+
+Not yet done:
+- the FreeBSD-host steps: `make firmware freebsd image validate test smoke`,
+  which also compile the ASL and the kernel driver;
+- keeping the build 7 artifacts in `build/previous-build7/` before rebuilding;
+- any hardware test.
+
+Next hardware step: plug the keyboard in before power-on, photograph the build
+8 USB lines, then type `echo USB_OK` at the `#` prompt. Afterwards unplug the
+adapter and boot Hekate once; that restores charge mode.

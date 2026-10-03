@@ -26,17 +26,20 @@ with the distribution's SHA256SUMS, console revision and exact boot method.
 | Coreboot romstage | `T210: romstage here` / `CPU prepare done` | Check carveouts, PMIC and CCPLEX startup. |
 | Coreboot ramstage / ATF | Coreboot ramstage and BL31 diagnostics | Check payload addresses and EL3 handoff. |
 | EDK2 | UEFI debug output / boot manager | Check firmware volume, SD access and EFI file discovery. |
+| USB host (build 8) | `USB power: on`, `USB host: ready (Success)` | Record all USB lines; `switchbsd/usb-host-disable` skips this stage. |
 | FreeBSD loader | ARM64 EFI loader, kernel and rootfs load | Check `/EFI/BOOT/BOOTAA64.EFI` and `/boot`. |
 | FreeBSD kernel | FreeBSD banner, ACPI devices and UART console | Check MADT, GTDT, PSCI and UART parameters. |
 | RAM root | `Trying to mount root from ufs:/dev/md0` | Check preloaded `mfs_root` and UFS support. |
 | Userland | `SWITCHBSD: USERLAND_READY` | Check static init/rescue binaries and `/etc/rc`. |
 | Interactive shell | `uname -a` produces output | Confirms serial input, scheduling and userland. |
+| USB keyboard (build 8) | `ehci0` on acpi0, `hkbd0`; typed `echo USB_OK` prints `USB_OK` | Compare the firmware USB lines with the kernel's `ehci0`/`usbus0` messages. |
 
 Build 3 restores SD pad power after Hekate handoff, automatically searches for
 FreeBSD and displays SD initialization and command errors if it cannot launch
 the loader; see `UPDATE.md`. Record the PMC register values and command details
-alongside the stage/status lines. USB keyboards are not
-supported by this firmware. If the loader is waiting in its menu, the serial
+alongside the stage/status lines. USB keyboards are not supported by the
+firmware screens or the FreeBSD loader menu; build 8 enables one only in
+FreeBSD (see `USB-UPDATE.md`). If the loader is waiting in its menu, the serial
 terminal is the intended input.
 
 The subsequent [screen console update](../CONSOLE-UPDATE.md) makes the screen

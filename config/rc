@@ -8,6 +8,11 @@ echo
 echo 'SWITCHBSD: USERLAND_READY'
 uname -a
 sysctl hw.machine hw.model hw.physmem kern.smp.active
+# Give USB devices a moment to enumerate before reporting them.
+sleep 3
+echo "USB controller: $(sysctl -n dev.ehci.0.%desc 2>/dev/null || echo not attached)"
+echo "USB keyboard: $(sysctl -n dev.hkbd.0.%desc 2>/dev/null || sysctl -n dev.ukbd.0.%desc 2>/dev/null || echo none)"
+echo 'USB keyboard test: type  echo USB_OK  at the prompt below.'
 echo 'RAM root is ready. Changes disappear on reboot.'
 echo 'Diagnostic shell on /dev/console; type exit to restart it.'
 while :; do

@@ -4,6 +4,7 @@
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiBootManagerLib.h>
 #include <Library/MemoryAllocationLib.h>
+#include <Library/BaseMemoryLib.h>
 #include <Library/DevicePathLib.h>
 #include <Protocol/BlockIo.h>
 #include <Protocol/SimpleFileSystem.h>
@@ -12,6 +13,7 @@
 #include <Protocol/ClockManagement.h>
 #include <Protocol/UBootClockManagement.h>
 #include <Protocol/Pmic.h>
+#include "SwitchBsdUsbHost.h"
 
 VOID SwitchBsdAutoBoot(VOID);
 
@@ -20,6 +22,55 @@ STATIC CONST CHAR16 *mSdStages[] = {
     L"host reset", L"card negotiation", L"card setup", L"capacity",
     L"sector 0 read", L"Block IO registration", L"ready"
 };
+
+STATIC CONST CHAR16 *mUsbSteps[] = {
+    L"not started", L"PLLU", L"controller clock", L"pad mux", L"UTMI PLL",
+    L"PHY calibration", L"PHY clock", L"controller reset",
+    L"PHY clock after reset", L"host mode", L"port power", L"ready"
+};
+
+STATIC CONST CHAR16 *mUsbVbus[] = {
+    L"not tried", L"I2C1 transfer failed", L"USB-C controller not recognized",
+    L"no OTG adapter or device detected", L"charger not recognized",
+    L"external power present", L"register write failed", L"on", L"boost fault"
+};
+
+STATIC VOID
+SwitchBsdUsbStart(EFI_FILE_PROTOCOL *Root)
+{
+    SWITCHBSD_USB_STATUS Usb;
+    EFI_FILE_PROTOCOL *File = NULL;
+    EFI_STATUS Status;
+
+    Status = Root->Open(Root, &File, L"\\switchbsd\\usb-host-disable", EFI_FILE_MODE_READ, 0);
+    if (!EFI_ERROR(Status)) {
+        File->Close(File);
+        SwitchBsdUsbHostClearMarker();
+        Print(L"\r\nUSB host: disabled by \\switchbsd\\usb-host-disable\r\n");
+        return;
+    }
+
+    Print(L"\r\nStarting USB host for FreeBSD...\r\n");
+    ZeroMem(&Usb, sizeof(Usb));
+    SwitchBsdUsbHostInit(&Usb);
+    Print(L"USB power: %s\r\n",
+          Usb.Vbus < ARRAY_SIZE(mUsbVbus) ? mUsbVbus[Usb.Vbus] : L"unknown");
+    Print(L"USB-C PD %04x/%04x status %04x %04x alert %04x\r\n",
+          Usb.PdManufacturer, Usb.PdDevice, Usb.PdStatus1, Usb.PdStatus2, Usb.PdAlert);
+    Print(L"Charger part %02x control %02x status %02x fault %02x\r\n",
+          Usb.ChargerPart, Usb.ChargerPowerOn, Usb.ChargerStatus, Usb.ChargerFault);
+    Print(L"USB host: %s (%r)%s%s\r\n",
+          Usb.Step < ARRAY_SIZE(mUsbSteps) ? mUsbSteps[Usb.Step] : L"unknown", Usb.Status,
+          (Usb.Flags & SWITCHBSD_USB_FLAG_PLLU_UNLOCKED) ? L"; PLLU lock not seen" : L"",
+          (Usb.Flags & SWITCHBSD_USB_FLAG_UTMIPLL_UNLOCKED) ? L"; UTMI PLL lock not seen" : L"");
+    Print(L"Pad mux %08x -> %08x; PHY %08x; mode %08x\r\n",
+          Usb.PadMuxBefore, Usb.PadMuxAfter, Usb.SuspendControl, Usb.UsbMode);
+    Print(L"Port %08x (%s, line state %u); HOSTPC %08x\r\n", Usb.PortStatus,
+          (Usb.PortStatus & 1) ? L"device connected" : L"no device", (Usb.PortStatus >> 10) & 3,
+          Usb.HostPortControl);
+    Print(L"Continuing in 5 seconds.\r\n");
+    gBS->Stall(5000000);
+}
 
 VOID
 SwitchBsdAutoBoot(VOID)
@@ -32,12 +83,15 @@ SwitchBsdAutoBoot(VOID)
     UINTN Index;
     EFI_STATUS Status;
     BOOLEAN TriedLoader = FALSE;
+    BOOLEAN TriedUsb = FALSE;
     EFI_INPUT_KEY Key;
     UINTN EventIndex;
     VOID *Interface;
 
+    // IRAM keeps the marker across warm resets; FreeBSD must not trust it.
+    SwitchBsdUsbHostClearMarker();
     gST->ConOut->ClearScreen(gST->ConOut);
-    Print(L"SwitchBSD SD diagnostic build 7 (USB host disabled)\r\n\r\n");
+    Print(L"SwitchBSD SD diagnostic build 8 (USB host for FreeBSD)\r\n\r\n");
     Status = gBS->LocateProtocol(&gTegraPinMuxProtocolGuid, NULL, &Interface);
     Print(L"Pin control: %r\r\n", Status);
     Status = gBS->LocateProtocol(&gTegra210ClockManagementProtocolGuid, NULL, &Interface);
@@ -98,9 +152,13 @@ SwitchBsdAutoBoot(VOID)
             if (EFI_ERROR(Status)) { Root->Close(Root); continue; }
             File->Close(File);
             Status = Root->Open(Root, &File, L"\\EFI\\BOOT\\BOOTAA64.EFI", EFI_FILE_MODE_READ, 0);
-            Root->Close(Root);
-            if (EFI_ERROR(Status)) continue;
+            if (EFI_ERROR(Status)) { Root->Close(Root); continue; }
             File->Close(File);
+            if (!TriedUsb) {
+                TriedUsb = TRUE;
+                SwitchBsdUsbStart(Root);
+            }
+            Root->Close(Root);
             Path = FileDevicePath(Handles[Index], L"\\EFI\\BOOT\\BOOTAA64.EFI");
             if (Path == NULL) continue;
             Status = EfiBootManagerInitializeLoadOption(&Option, LoadOptionNumberUnassigned,
@@ -124,7 +182,7 @@ SwitchBsdAutoBoot(VOID)
         }
     }
     Print(L"\r\nRecord this screen, then power off to update the SD card.\r\n");
-    Print(L"USB host enabled; keyboard should work in this UEFI screen.\r\n");
+    Print(L"The USB keyboard works only in FreeBSD; this screen accepts UART input.\r\n");
     gBS->SetWatchdogTimer(0, 0, 0, NULL);
     gST->ConIn->Reset(gST->ConIn, FALSE);
     do {

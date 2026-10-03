@@ -1,0 +1,61 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
+#ifndef SWITCHBSD_USB_HOST_H
+#define SWITCHBSD_USB_HOST_H
+
+/*
+ * Ready marker shared with the DSDT USB0 _STA method. It lives in the IRAM
+ * block Coreboot reserved for USB bounce buffers, after the 20-byte Hekate
+ * handoff descriptor at 0x4003E000. FreeBSD never allocates IRAM.
+ */
+#define SWITCHBSD_USB_STATUS_ADDRESS 0x4003E020u
+#define SWITCHBSD_USB_READY_MAGIC    0x55534230u
+
+enum {
+  SwitchUsbStepNone, SwitchUsbStepPllu, SwitchUsbStepClock, SwitchUsbStepPadMux,
+  SwitchUsbStepUtmiPll, SwitchUsbStepCalibration, SwitchUsbStepPhyClock,
+  SwitchUsbStepReset, SwitchUsbStepPhyClockAfterReset, SwitchUsbStepHostMode,
+  SwitchUsbStepPort, SwitchUsbStepReady
+};
+
+enum {
+  SwitchUsbVbusNotTried, SwitchUsbVbusI2cFailed, SwitchUsbVbusPdUnknown,
+  SwitchUsbVbusNoOtgDevice, SwitchUsbVbusChargerUnknown,
+  SwitchUsbVbusInputPresent, SwitchUsbVbusWriteFailed, SwitchUsbVbusOn,
+  SwitchUsbVbusFault
+};
+
+#define SWITCHBSD_USB_FLAG_PLLU_UNLOCKED    0x1
+#define SWITCHBSD_USB_FLAG_UTMIPLL_UNLOCKED 0x2
+
+/* The caller zeroes this structure; unread snapshots stay zero. */
+typedef struct {
+  UINT32 Step;
+  EFI_STATUS Status;
+  UINT32 Flags;
+  UINT32 Vbus;
+  UINT16 PdManufacturer;
+  UINT16 PdDevice;
+  UINT16 PdAlert;
+  UINT16 PdStatus1;
+  UINT16 PdStatus2;
+  UINT8 ChargerPart;
+  UINT8 ChargerPowerOn;
+  UINT8 ChargerStatus;
+  UINT8 ChargerFault;
+  UINT32 PadMuxBefore;
+  UINT32 PadMuxAfter;
+  UINT32 SuspendControl;
+  UINT32 UsbMode;
+  UINT32 PortStatus;
+  UINT32 HostPortControl;
+} SWITCHBSD_USB_STATUS;
+
+/* Bounded I2C1 transfers; each returns 0 on success. */
+INTN SwitchBsdI2cSetup(VOID);
+INTN SwitchBsdI2cRead(UINT32 Device, UINT32 Register, UINT8 *Buffer, UINT32 Size);
+INTN SwitchBsdI2cWrite(UINT32 Device, UINT32 Register, CONST UINT8 *Buffer, UINT32 Size);
+
+EFI_STATUS SwitchBsdUsbHostInit(SWITCHBSD_USB_STATUS *Diag);
+VOID SwitchBsdUsbHostClearMarker(VOID);
+
+#endif

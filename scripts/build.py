@@ -14,6 +14,9 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 SRC, BUILD, DIST = (ROOT / n for n in ("sources", "build", "dist"))
 JOBS = os.environ.get("JOBS", "8")
+USB_UPDATE_FILES = ("switchbsd/coreboot.rom", "bootloader/payloads/hekate-switchbsd.bin",
+                    "boot/kernel/kernel", "boot/rootfs.ufs", "switchbsd/USB-UPDATE.md",
+                    "switchbsd/BUILD-TIME.txt")
 
 
 def run(args, *, cwd=ROOT, env=None, log=None):
@@ -85,11 +88,18 @@ def freebsd():
     require(["make", "clang"])
     if not (SRC / "freebsd/Makefile").exists():
         raise RuntimeError("FreeBSD sources missing; run make fetch")
-    from prepare_firmware import replace
+    from prepare_firmware import replace, write
     replace("freebsd/sys/dev/uart/uart_dev_ns8250.c",
             "static struct acpi_uart_compat_data acpi_compat_data[] = {",
             "static struct acpi_uart_compat_data acpi_compat_data[] = {\n"
             '\t{"NVDA0100", &uart_ns8250_class, 2, 1, 408000000, 0, "Tegra210 UART (Switch experiment)"},')
+    # Firmware-initialized USB-C host controller (DSDT SWBS0001).
+    write("freebsd/sys/dev/usb/controller/switchbsd_ehci_acpi.c",
+          (ROOT / "config/switchbsd-ehci-acpi.c").read_text())
+    replace("freebsd/sys/conf/files.arm64",
+            "dev/usb/controller/generic_ehci_acpi.c\t\toptional ehci acpi\n",
+            "dev/usb/controller/generic_ehci_acpi.c\t\toptional ehci acpi\n"
+            "dev/usb/controller/switchbsd_ehci_acpi.c\toptional ehci acpi\n")
     shutil.copyfile(ROOT / "config/SWITCHDIAG", SRC / "freebsd/sys/arm64/conf/SWITCHDIAG")
     env = dict(os.environ, MAKEOBJDIRPREFIX=str(BUILD / "obj"))
     args = ["/usr/bin/make", "-C", SRC / "freebsd", f"-j{JOBS}",
@@ -178,7 +188,7 @@ def image():
     (sd / "bootloader/ini/switchbsd.ini").write_text(
         "[FreeBSD 15.1 experiment]\npayload=bootloader/payloads/hekate-switchbsd.bin\n")
     copy(ROOT / "sources.lock.json", sd / "switchbsd/sources.lock.json")
-    for name in ("README.md", "UPDATE.md", "CONSOLE-UPDATE.md", "docs/boot-test.md",
+    for name in ("README.md", "UPDATE.md", "CONSOLE-UPDATE.md", "USB-UPDATE.md", "docs/boot-test.md",
                  "docs/firmware.md", "docs/licenses.md", "docs/hardware-boot-2026-10-03.md"):
         copy(ROOT / name, sd / "switchbsd" / name)
     for name in ("switch/LICENSE", "hekate/LICENSE", "coreboot/COPYING",
@@ -226,6 +236,11 @@ def image():
         z.write(sd / "boot/loader.conf", "boot/loader.conf")
         z.write(sd / "switchbsd/CONSOLE-UPDATE.md", "switchbsd/CONSOLE-UPDATE.md")
         z.write(build_time_file, "switchbsd/BUILD-TIME.txt")
+        z.comment = f"SwitchBSD build time (UTC): {build_time}".encode()
+    # The USB keyboard needs the new firmware, kernel driver and RAM-root rc.
+    with zipfile.ZipFile(DIST / "freebsd-switch-15.1-usb-update.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        for name in USB_UPDATE_FILES:
+            z.write(sd / name, name)
         z.comment = f"SwitchBSD build time (UTC): {build_time}".encode()
     checksums()
 
