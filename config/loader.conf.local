@@ -1,0 +1,4 @@
+# Boot the codex RAM root. The file on the SD card is rootfs-codex.ufs.gz:
+# the loader adds ".gz" itself and decompresses it, so do not name the .gz
+# file here. Delete this file to boot the small diagnostic root again.
+mfsroot_name="/boot/rootfs-codex.ufs"

@@ -3,6 +3,44 @@
 Builds are numbered by firmware revision. All dates are 2026-10-03; details
 and validation records are in [STATUS.md](STATUS.md).
 
+## Codex root update (unreleased, not yet built or tested on hardware)
+
+The firmware is unchanged from build 8, so there is no new build number.
+
+### Added
+- A second RAM root, `boot/rootfs-codex.ufs.gz`, with the OpenAI Codex CLI
+  (`misc/codex`), bash, ripgrep and git-lite from the FreeBSD 15 aarch64
+  packages. `boot/loader.conf.local` selects it; deleting that file boots the
+  diagnostic root again.
+- `scripts/codex_root.py`:
+  - fetches the packages with the host's `pkg`, using a private configuration;
+  - stages only the files that the root's programs execute or link, by
+    following their ELF `DT_NEEDED` entries. The packages' declared
+    dependencies (python, X11) would add about 360 MiB without being used;
+  - keeps hard links, so git-core does not grow the image.
+- The FreeBSD dynamic linker, base shared libraries, common command-line
+  tools (`config/codex-tools.txt`), CA certificates, password databases and
+  `ntp.conf` in the codex root.
+- `/etc/rc.codex` and `switchbsd-net`: tmpfs on `/tmp` and `/root`, DHCP on
+  every Ethernet interface, an NTP clock with the build time as the lower
+  bound, and the codex version on screen. Every wait is bounded.
+- Kernel drivers for USB network adapters: `axge`, `axe`, `cdce`, `urndis` and
+  `ipheth` (`ure`, `smsc` and `muge` come from GENERIC).
+- `dist/freebsd-switch-15.1-codex-update.zip`, `CODEX.md`, and the package
+  versions and SHA-256 values under `target_packages` in `build-info.json`.
+- Host tests for the ELF dependency closure, link handling, the loader
+  setting and the shell scripts (`tests/test_codex_root.py`).
+
+### Changed
+- `config/src.conf` no longer sets `WITHOUT_KERBEROS`, because git's HTTPS
+  transport needs libcurl and libcurl links the Kerberos libraries.
+- `make freebsd` also runs `make distribution` into `build/world`.
+- `make fetch` also fetches the codex packages.
+- The FAT disk image grows with the bundle; it is never smaller than 512 MiB.
+- `make smoke` boots both RAM roots, the codex one with a QEMU network.
+- `validate.py` checks that the codex root is self-contained (libraries,
+  symlinks, AArch64 ELF), its gzip copy, the loader setting and the new ZIP.
+
 ## Build 8 — USB keyboard for the FreeBSD shell (unreleased, untested on hardware)
 
 ### Added

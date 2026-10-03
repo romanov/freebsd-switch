@@ -1,0 +1,28 @@
+# SwitchBSD codex root, sourced by /etc/rc before the shell starts.
+# Only rootfs-codex.ufs has this file; the diagnostic root skips it.
+PATH=/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin:/rescue
+HOME=/root
+TERM=xterm
+LANG=C.UTF-8
+SHELL=/usr/local/bin/bash
+SSL_CERT_FILE=/etc/ssl/cert.pem
+export PATH HOME TERM LANG SHELL SSL_CERT_FILE
+
+# RAM-backed scratch space, so codex sessions never fill the UFS root.
+mount -t tmpfs -o size=1g,mode=1777 tmpfs /tmp
+mount -t tmpfs -o size=1g,mode=0700 tmpfs /root
+mkdir -p /root/.codex /root/work
+ldconfig /lib /usr/lib /usr/local/lib
+ifconfig lo0 inet 127.0.0.1/8 up
+
+# TLS rejects every certificate while the clock reads 1970. Never start
+# earlier than the image build; switchbsd-net then sets the time with NTP.
+build_epoch=$(cat /etc/switchbsd-build-epoch)
+if [ "$(date +%s)" -lt "$build_epoch" ]; then
+    date -f %s "$build_epoch" >/dev/null
+fi
+
+/usr/local/bin/switchbsd-net
+echo "Codex: $(codex --version 2>&1 | head -n 1)"
+echo 'Codex quick start: codex login --device-auth, then cd ~/work and run codex.'
+echo 'After plugging in a network adapter, run switchbsd-net.'

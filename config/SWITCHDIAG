@@ -2,3 +2,10 @@ include GENERIC
 ident SWITCHDIAG
 # Start with the known GENERIC device set. Root is a preloaded md(4) image.
 options DDB
+# USB network adapters for the codex root. Modules are not built, so they must
+# be compiled in; GENERIC already has ure (RTL815x), smsc and muge.
+device axge		# ASIX AX88178A/AX88179
+device axe		# ASIX AX88172/AX88772
+device cdce		# CDC Ethernet/NCM adapters and phones
+device urndis		# Android USB tethering (RNDIS)
+device ipheth		# iPhone USB tethering

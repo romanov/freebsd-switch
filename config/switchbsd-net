@@ -1,0 +1,39 @@
+#!/bin/sh
+# Bring up USB Ethernet or phone tethering with DHCP, then set the clock.
+# Safe to run again after plugging in an adapter; every wait is bounded.
+PATH=/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin:/rescue
+export PATH
+
+interfaces=$(ifconfig -l ether)
+if [ -z "$interfaces" ]; then
+    echo 'Network: no USB Ethernet adapter or tethered phone found'
+    exit 1
+fi
+for ifc in $interfaces; do
+    ifconfig "$ifc" up
+    # Exits quietly when dhclient already runs on this interface.
+    dhclient -b "$ifc" >/dev/null 2>&1
+done
+
+tries=0
+while ! route -n get -inet default >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 15 ]; then
+        echo "Network: no DHCP lease on $interfaces"
+        exit 1
+    fi
+    sleep 1
+done
+for ifc in $interfaces; do
+    address=$(ifconfig "$ifc" inet | sed -n 's/^[[:space:]]*inet \([0-9.]*\) .*/\1/p' | head -n 1)
+    if [ -n "$address" ]; then
+        echo "Network: $ifc $address"
+    fi
+done
+
+if timeout 30 ntpd -qg -c /etc/ntp.conf >/dev/null 2>&1; then
+    echo "Clock: $(date) (NTP)"
+else
+    echo "Clock: $(date) (NTP failed; TLS may reject certificates)"
+    exit 1
+fi

@@ -13,6 +13,8 @@ sleep 3
 echo "USB controller: $(sysctl -n dev.ehci.0.%desc 2>/dev/null || echo not attached)"
 echo "USB keyboard: $(sysctl -n dev.hkbd.0.%desc 2>/dev/null || sysctl -n dev.ukbd.0.%desc 2>/dev/null || echo none)"
 echo 'USB keyboard test: type  echo USB_OK  at the prompt below.'
+# The codex root adds networking, the clock and its environment here.
+[ -r /etc/rc.codex ] && . /etc/rc.codex
 echo 'RAM root is ready. Changes disappear on reboot.'
 echo 'Diagnostic shell on /dev/console; type exit to restart it.'
 while :; do

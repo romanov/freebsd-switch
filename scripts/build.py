@@ -17,6 +17,9 @@ JOBS = os.environ.get("JOBS", "8")
 USB_UPDATE_FILES = ("switchbsd/coreboot.rom", "bootloader/payloads/hekate-switchbsd.bin",
                     "boot/kernel/kernel", "boot/rootfs.ufs", "switchbsd/USB-UPDATE.md",
                     "switchbsd/BUILD-TIME.txt")
+# The codex root needs the build 8 USB host for its keyboard and network adapter.
+CODEX_UPDATE_FILES = USB_UPDATE_FILES + ("boot/rootfs-codex.ufs.gz", "boot/loader.conf.local",
+                                         "switchbsd/CODEX.md")
 
 
 def run(args, *, cwd=ROOT, env=None, log=None):
@@ -82,6 +85,8 @@ def fetch():
             raise RuntimeError(f"Unstamped source tree {dest}; preserve local edits and move it aside before fetch")
         run(["tar", "xf", archive, f"--strip-components={entry['strip']}", "-C", dest])
         stamp.write_text(entry["revision"] + "\n")
+    from codex_root import fetch_packages
+    fetch_packages()
 
 
 def freebsd():
@@ -111,6 +116,9 @@ def freebsd():
     stage.mkdir(exist_ok=True)
     run(args + ["installworld", f"DESTDIR={stage}", "NO_ROOT=yes", "DB_FROM_SRC=yes"],
         env=env, log="installworld.log")
+    # /etc files (passwd databases, services, ntp.conf) for the codex root.
+    run(args + ["distribution", f"DESTDIR={stage}", "NO_ROOT=yes", "DB_FROM_SRC=yes"],
+        env=env, log="distribution.log")
     run(args + ["installkernel", "KERNCONF=SWITCHDIAG", f"DESTDIR={stage}",
                 "NO_ROOT=yes", "NO_MODULES=yes"], env=env, log="installkernel.log")
 
@@ -124,19 +132,12 @@ def copy(source, target):
     shutil.copyfile(source, target)
 
 
-def assemble_os():
+def stage_base_root(root):
+    """The static diagnostic RAM root; the codex root starts from the same tree."""
     world = BUILD / "world"
-    needed = [world / "boot/loader.efi", world / "boot/kernel/kernel",
-              world / "rescue/rescue", world / "sbin/init"]
-    for path in needed:
-        if not path.is_file():
-            raise RuntimeError(f"Missing artifact: {path}; run make freebsd and make firmware")
-    root = BUILD / "root"
-    sd = BUILD / "sd"
-    for p in (root, sd):
-        if p.exists():
-            shutil.rmtree(p)
-        p.mkdir()
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir()
     for d in ["rescue", "bin", "sbin", "etc", "dev", "tmp", "var/run", "root"]:
         (root / d).mkdir(parents=True, exist_ok=True)
     copy(world / "rescue/rescue", root / "rescue/rescue")
@@ -162,6 +163,21 @@ def assemble_os():
     (root / "etc/login.conf").write_text("default:\\\n\t:umask=022:\n\ndaemon:\\\n\t:tc=default:\n")
     copy(world / "usr/share/misc/termcap", root / "etc/termcap")
     (root / "tmp").chmod(0o1777)
+
+
+def assemble_os():
+    world = BUILD / "world"
+    needed = [world / "boot/loader.efi", world / "boot/kernel/kernel",
+              world / "rescue/rescue", world / "sbin/init"]
+    for path in needed:
+        if not path.is_file():
+            raise RuntimeError(f"Missing artifact: {path}; run make freebsd and make firmware")
+    root = BUILD / "root"
+    sd = BUILD / "sd"
+    if sd.exists():
+        shutil.rmtree(sd)
+    sd.mkdir()
+    stage_base_root(root)
     run(["makefs", "-t", "ffs", "-B", "little", "-s", "128m", "-o", "version=2",
          BUILD / "rootfs.ufs", root], log="rootfs.log")
     # Use the release's boot scripts; only configuration and rootfs differ.
@@ -169,6 +185,8 @@ def assemble_os():
     copy(world / "boot/loader.efi", sd / "EFI/BOOT/BOOTAA64.EFI")
     copy(ROOT / "config/loader.conf", sd / "boot/loader.conf")
     copy(BUILD / "rootfs.ufs", sd / "boot/rootfs.ufs")
+    from codex_root import assemble_codex_root
+    assemble_codex_root(sd)
     return sd
 
 
@@ -188,8 +206,9 @@ def image():
     (sd / "bootloader/ini/switchbsd.ini").write_text(
         "[FreeBSD 15.1 experiment]\npayload=bootloader/payloads/hekate-switchbsd.bin\n")
     copy(ROOT / "sources.lock.json", sd / "switchbsd/sources.lock.json")
-    for name in ("README.md", "UPDATE.md", "CONSOLE-UPDATE.md", "USB-UPDATE.md", "docs/boot-test.md",
-                 "docs/firmware.md", "docs/licenses.md", "docs/hardware-boot-2026-10-03.md"):
+    for name in ("README.md", "UPDATE.md", "CONSOLE-UPDATE.md", "USB-UPDATE.md", "CODEX.md",
+                 "docs/boot-test.md", "docs/firmware.md", "docs/licenses.md",
+                 "docs/hardware-boot-2026-10-03.md"):
         copy(ROOT / name, sd / "switchbsd" / name)
     for name in ("switch/LICENSE", "hekate/LICENSE", "coreboot/COPYING",
                  "coreboot/3rdparty/arm-trusted-firmware/license.rst",
@@ -224,6 +243,11 @@ def image():
     for path in sorted((BUILD / "firmware").glob("*")):
         if path.is_file():
             metadata["artifacts"][path.name] = digest(path)
+    codex = json.loads((BUILD / "root-codex.json").read_text())
+    metadata["artifacts"]["rootfs-codex.ufs"] = digest(BUILD / "rootfs-codex.ufs")
+    metadata["target_packages"] = {
+        p["name"]: {"version": p["version"], "origin": p["origin"], "sha256": p["sha256"],
+                    "staged": p["name"] in codex["staged"]} for p in codex["packages"]}
     (DIST / "build-info.json").write_text(json.dumps(metadata, indent=2) + "\n")
     with zipfile.ZipFile(DIST / "freebsd-switch-15.1-firmware-update.zip", "w", zipfile.ZIP_DEFLATED) as z:
         for name in ("switchbsd/coreboot.rom", "bootloader/payloads/hekate-switchbsd.bin",
@@ -242,12 +266,23 @@ def image():
         for name in USB_UPDATE_FILES:
             z.write(sd / name, name)
         z.comment = f"SwitchBSD build time (UTC): {build_time}".encode()
+    with zipfile.ZipFile(DIST / "freebsd-switch-15.1-codex-update.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        for name in CODEX_UPDATE_FILES:
+            z.write(sd / name, name)
+        for path in sorted((sd / "switchbsd/licenses/packages").rglob("*")):
+            if path.is_file():
+                z.write(path, path.relative_to(sd))
+        z.comment = f"SwitchBSD build time (UTC): {build_time}".encode()
     checksums()
 
 
 def make_disk(sd, output):
     fat = BUILD / (output.stem + ".fat")
-    run(["makefs", "-t", "msdos", "-s", "512m", "-o", "fat_type=32,sectors_per_cluster=8",
+    # At least the original 512 MiB; the codex root needs more.
+    mib = 2 ** 20
+    total = sum(p.stat().st_size for p in sd.rglob("*") if p.is_file())
+    size = max(512, -(-(total + 64 * mib) // (64 * mib)) * 64)
+    run(["makefs", "-t", "msdos", "-s", f"{size}m", "-o", "fat_type=32,sectors_per_cluster=8",
          fat, sd], log="fat-image.log")
     run(["mkimg", "-s", "mbr", "-a", "1", "-p", f"efi:={fat}", "-o", output])
 

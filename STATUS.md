@@ -225,3 +225,58 @@ Not yet done:
 Next hardware step: plug the keyboard in before power-on, photograph the build
 8 USB lines, then type `echo USB_OK` at the `#` prompt. Afterwards unplug the
 adapter and boot Hekate once; that restores charge mode.
+
+## Codex root — source only, 2026-10-03
+
+Goal: run the FreeBSD `codex` package from the Switch shell after boot.
+
+Package research against `FreeBSD:15:aarch64` (index of 2026-09-29):
+- `codex` 0.155.1 in `latest` (0.142.4 in `quarterly`). It installs `codex`,
+  `codex-code-mode-host` (V8) and `codex-responses-api-proxy`, about 191 MiB.
+- The package's declared dependencies add up to about 573 MiB, mostly python312
+  and X11, pulled in by glib and dbus. The binaries themselves only link
+  `libdbus-1`, `libonig`, `libzstd` and base libraries, so the build follows
+  ELF `DT_NEEDED` entries instead of installing whole packages.
+- git-lite's libcurl needs the base Kerberos libraries, so
+  `WITHOUT_KERBEROS` was removed from `config/src.conf`.
+
+Design:
+- A second RAM root, `boot/rootfs-codex.ufs.gz`, selected by
+  `boot/loader.conf.local`. Only one `mfs_root` is ever loaded, so the root
+  stays `md0`.
+- The loader adds `.gz` to the configured name and decompresses while
+  loading, which cuts the SD read by about 3×.
+- Deleting `boot/loader.conf.local` returns to the unchanged 128 MiB static root.
+- Networking needs the build 8 USB host, a USB 2.0 hub, and a USB Ethernet
+  adapter or Android USB tethering.
+
+Validation so far, on the Windows checkout:
+- 29 host tests pass, 15 of them new: the ELF parser and dependency closure on
+  synthetic ELF files, soname links, the Kerberos error hint, hard-link
+  preservation, the codex-root validation, the loader setting, and a `sh -n`
+  check of the rc scripts.
+- The real aarch64 packages, extracted in a scratch directory and run through
+  `codex_root.py` (packages only, without the FreeBSD world):
+  - the parser read the `DT_NEEDED` entries of all 210 ELF files;
+  - the closure copied 14 package libraries (6 MiB): dbus, oniguruma, zstd,
+    gettext, pcre2, curl, expat, brotli, idn2, unistring, psl, nghttp2 and
+    ssh2. Python, glib and X11 were not needed;
+  - the remaining sonames are base libraries, including
+    `libgssapi_krb5.so.122` and `libkrb5.so.122`;
+  - git-core's 175 entries stayed 26 inodes, and no symlinks were broken;
+  - package content is 227 MiB, which gzips to 100 MiB. The estimate is a UFS
+    image of about 380 MiB and a `.gz` of about 110 MiB.
+
+Not yet done:
+- keeping the current `dist/` in `build/previous-build8/` before rebuilding;
+- the FreeBSD-host steps: `make fetch freebsd image validate test smoke`. The
+  `freebsd` step is a full world rebuild because of the Kerberos change;
+- recording the actual codex root and gzip sizes, and the package versions;
+- any hardware test.
+
+Open risks:
+- A root of about 400 MiB is untested in the Switch loader and early kernel
+  mapping; 128 MiB is proven.
+- SD read time with the UEFI driver.
+- Entropy before the first TLS handshake (no hardware RNG driver).
+- The OTG power budget for the hub, keyboard and network adapter.

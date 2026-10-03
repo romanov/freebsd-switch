@@ -20,6 +20,16 @@ changes to upstream files. Keep these patches, project templates and source
 archives with any binary redistribution; the upstream license files describe
 the applicable terms. Toolchain packages are listed in `build-info.json`.
 
+The codex root also contains binaries from FreeBSD aarch64 packages, under
+their own licenses. Among them are codex (Apache-2.0), bash (GPL-3.0),
+git-lite (GPL-2.0), ripgrep (MIT or Unlicense) and libcurl (curl), plus the
+libraries they link. The license files of every package that supplies a file
+are copied to `usr/local/share/licenses/` in the root and to
+`switchbsd/licenses/packages/` in the bundle. `build-info.json`
+(`target_packages`) records each package's version, ports origin and SHA-256.
+The corresponding sources are the FreeBSD ports tree at those origins and the
+distfiles it names.
+
 New project Python scripts, configuration, tests and documentation are offered
 under the BSD-2-Clause license below. Firmware templates carry their own SPDX notices: the Hekate/Coreboot
 templates are GPL-2.0-only, the SD driver replacements are GPL-2.0-or-later,

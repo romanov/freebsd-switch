@@ -33,6 +33,12 @@ starts the USB1 controller after the screen is up, without a UEFI USB driver,
 and a small FreeBSD driver takes the controller over. It is not yet tested on
 hardware; `switchbsd/usb-host-disable` on the SD card returns to build 7 behaviour.
 
+The codex root adds the OpenAI Codex CLI (`misc/codex`) with bash, ripgrep,
+git, DHCP networking over USB Ethernet or phone tethering, and NTP time; see
+the [codex root update](CODEX.md). It is a second, larger RAM root selected by
+`boot/loader.conf.local`. Delete that file to boot the small diagnostic root.
+Not yet built on the FreeBSD host or tested on hardware.
+
 For the subsequent FreeBSD screen followed by a white rectangle, apply the
 [screen console update](CONSOLE-UPDATE.md). It enables kernel output on both
 the framebuffer and UART, with the screen primary. Set `boot_serial="YES"` in
@@ -72,18 +78,30 @@ verifies each archive before extraction. Local source adaptations are applied
 by `scripts/prepare_firmware.py` and saved in `patches/generated/`; original
 files remain in `cache/originals/`. A second build reuses existing objects.
 
+`make fetch` also downloads the FreeBSD 15 aarch64 packages listed in
+`config/codex-packages.json`, with their dependencies, into `cache/packages/`.
+It uses the host's `pkg` with a private configuration and database, so it
+needs no administrator access and leaves the host's packages alone. `pkg`
+checks the repository signature and the package checksums. Later runs reuse
+the cache; set `PKG_REFRESH=1` to pick up newer packages. The official
+repository removes superseded packages, so the versions and SHA-256 values
+used are recorded in `build-info.json` rather than pinned. Only files that
+the staged programs execute or link go into the codex root.
+
 ## Output
 
 - `dist/freebsd-switch-15.1-sd.zip`: files to extract onto a FAT32 SD card.
 - `dist/freebsd-switch-15.1-firmware-update.zip`: small firmware-only update.
 - `dist/freebsd-switch-15.1-console-update.zip`: small screen-console configuration update.
 - `dist/freebsd-switch-15.1-usb-update.zip`: build 8 firmware, kernel and RAM root for the USB keyboard.
+- `dist/freebsd-switch-15.1-codex-update.zip`: the build 8 files plus the codex
+  root, `boot/loader.conf.local`, `CODEX.md` and the package licenses.
 - Every ZIP contains `switchbsd/BUILD-TIME.txt` and carries the same UTC build
   time in its archive comment.
 - `dist/freebsd-switch-15.1.img`: standalone MBR/FAT32 disk image.
 - `dist/build-info.json`: source, toolchain and patch provenance.
 - `dist/SHA256SUMS`: hashes of distribution files.
-- `logs/qemu-uart.log`: QEMU serial transcript.
+- `logs/qemu-uart.log` and `logs/qemu-codex-uart.log`: QEMU serial transcripts.
 
 Prefer extracting the ZIP onto an existing FAT32 card. Preserve the existing
 `bootloader/hekate_ipl.ini`; this bundle adds a separate More Configs entry at
@@ -111,12 +129,17 @@ Diagnostic shell on /dev/console; type exit to restart it.
 
 `make smoke` boots a copy using QEMU's own UEFI and PL011 serial device, supplies
 an entropy device, and verifies that a command actually executes in the shell.
-Set `QEMU_EFI` to override `/usr/local/share/qemu/edk2-aarch64-code.fd`, and
-`QEMU_TIMEOUT` to override the 300-second timeout. QEMU does not test the Switch
-firmware, Tegra drivers, physical UART wiring or the Hekate/Coreboot handoff.
+It boots twice: the diagnostic root, then the codex root with a QEMU user-mode
+network. The codex run checks for the DHCP address and runs `codex --version`,
+`rg --version` and `git --version`. Set `QEMU_EFI` to override
+`/usr/local/share/qemu/edk2-aarch64-code.fd`. `QEMU_TIMEOUT` and
+`QEMU_CODEX_TIMEOUT` override the 300-second and 900-second timeouts. QEMU does not
+test the Switch firmware, Tegra drivers, physical UART wiring or the
+Hekate/Coreboot handoff.
 
 The root filesystem is volatile. There is no persistent storage setup,
-network configuration, Joy-Con input, audio, graphics acceleration or suspend.
+Joy-Con input, audio, graphics acceleration or suspend. Only the codex root
+configures a network, and only through a USB adapter.
 Secondary CPU startup is disabled. The diagnostic kernel retains GENERIC
 hardware support; it is not a size-optimized Switch-only kernel.
 

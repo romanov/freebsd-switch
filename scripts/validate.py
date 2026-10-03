@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Artifact checks that do not execute target binaries or touch disk devices."""
+import gzip
+import hashlib
 from pathlib import Path
 import struct
 import subprocess
 import sys
 import tempfile
 import zipfile
-from build import ROOT, SRC, BUILD, DIST, USB_UPDATE_FILES, digest, check_hash
+from build import ROOT, SRC, BUILD, DIST, USB_UPDATE_FILES, CODEX_UPDATE_FILES, digest, check_hash
+import codex_root
 
 
 def elf_aarch64(path, static=False):
@@ -95,9 +98,30 @@ def firmware():
 def sd_files(sd):
     for name in ["EFI/BOOT/BOOTAA64.EFI", "boot/kernel/kernel", "boot/rootfs.ufs",
                  "boot/loader.conf", "boot/defaults/loader.conf", "boot/lua/loader.lua",
-                 "switchbsd/coreboot.rom", "bootloader/payloads/hekate-switchbsd.bin"]:
+                 "switchbsd/coreboot.rom", "bootloader/payloads/hekate-switchbsd.bin",
+                 "boot/rootfs-codex.ufs.gz", "boot/loader.conf.local"]:
         if not (sd / name).is_file():
             raise RuntimeError("Incomplete SD bundle: " + name)
+
+
+def codex(sd, root=codex_root.CODEX_ROOT, ufs=codex_root.CODEX_UFS):
+    """The codex root is self-contained: every library and link resolves inside it."""
+    for name in codex_root.CODEX_REQUIRED:
+        if not ((root / name).exists() or (root / name).is_symlink()):
+            raise RuntimeError("Incomplete codex root: " + name)
+    codex_root.loader_local_name((sd / "boot/loader.conf.local").read_text())
+    for path, _ in codex_root.elf_files(root):
+        elf_aarch64(path)
+    missing = codex_root.missing_libraries(root)
+    if missing:
+        raise RuntimeError("Codex root has unresolved libraries: " +
+                           ", ".join(f"{soname} ({name})" for name, soname in missing))
+    broken = codex_root.broken_links(root)
+    if broken:
+        raise RuntimeError("Codex root has broken symlinks: " + ", ".join(broken))
+    with gzip.open(sd / "boot/rootfs-codex.ufs.gz", "rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != digest(ufs):
+            raise RuntimeError("rootfs-codex.ufs.gz does not decompress to build/rootfs-codex.ufs")
 
 
 def archive_build_time(archive):
@@ -130,6 +154,8 @@ def main():
         if value not in config:
             raise RuntimeError("Missing required loader setting: " + value)
     subprocess.run(["/sbin/fsck_ufs", "-n", BUILD / "rootfs.ufs"], check=True)
+    subprocess.run(["/sbin/fsck_ufs", "-n", codex_root.CODEX_UFS], check=True)
+    codex(sd)
     image = DIST / "freebsd-switch-15.1.img"
     with image.open("rb") as stream:
         mbr = stream.read(512)
@@ -138,7 +164,8 @@ def main():
     offset = struct.unpack_from("<I", mbr, 454)[0] * 512
     artifacts = ("EFI/BOOT/BOOTAA64.EFI", "boot/kernel/kernel", "boot/rootfs.ufs",
                  "boot/loader.conf", "switchbsd/coreboot.rom",
-                 "bootloader/payloads/hekate-switchbsd.bin")
+                 "bootloader/payloads/hekate-switchbsd.bin",
+                 "boot/rootfs-codex.ufs.gz", "boot/loader.conf.local")
     with tempfile.TemporaryDirectory() as directory:
         for name in artifacts:
             extracted = Path(directory) / "artifact"
@@ -176,10 +203,18 @@ def main():
         for name in USB_UPDATE_FILES:
             if archive.read(name) != (sd / name).read_bytes():
                 raise RuntimeError("USB update does not match SD bundle: " + name)
+    with zipfile.ZipFile(DIST / "freebsd-switch-15.1-codex-update.zip") as archive:
+        if archive.testzip() is not None:
+            raise RuntimeError("Corrupt codex update ZIP archive")
+        if archive_build_time(archive) != build_time:
+            raise RuntimeError("ZIP build times do not match")
+        for name in CODEX_UPDATE_FILES:
+            if archive.read(name) != (sd / name).read_bytes():
+                raise RuntimeError("Codex update does not match SD bundle: " + name)
     for line in (DIST / "SHA256SUMS").read_text().splitlines():
         sha, name = line.split("  ", 1)
         check_hash(DIST / name, sha)
-    print("SD image, RAM root, AArch64 binaries and distribution checksums passed.")
+    print("SD image, RAM roots, AArch64 binaries, codex libraries and distribution checksums passed.")
 
 
 if __name__ == "__main__":
