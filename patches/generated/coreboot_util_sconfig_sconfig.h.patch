@@ -1,0 +1,11 @@
+--- a/coreboot/util/sconfig/sconfig.h
++++ b/coreboot/util/sconfig/sconfig.h
+@@ -77,7 +77,7 @@
+ 	struct reg *reg;
+ };
+ 
+-struct device *head;
++extern struct device *head;
+ 
+ struct header;
+ struct header {

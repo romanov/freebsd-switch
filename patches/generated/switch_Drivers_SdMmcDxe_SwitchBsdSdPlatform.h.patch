@@ -1,0 +1,55 @@
+--- a/switch/Drivers/SdMmcDxe/SwitchBsdSdPlatform.h
++++ b/switch/Drivers/SdMmcDxe/SwitchBsdSdPlatform.h
+@@ -0,0 +1,52 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later
++ * Erista SDMMC1 handoff recovery and command diagnostics.
++ * Bit definitions and power settling time follow the pinned Hekate source:
++ * bdk/soc/pmc_t210.h and bdk/storage/sdmmc_driver.c.
++ */
++#define SWITCHBSD_PMC_SDMMC1 (1U << 12)
++
++STATIC SWITCHBSD_SD_STATUS *mSwitchSdDiag;
++
++STATIC VOID
++SwitchBsdSdPowerOn(VOID)
++{
++    UINT32 Before = MmioRead32(PMC_BASE + APBDEV_PMC_NO_IOPOWER);
++
++    // PmicDxe has restored LDO2 to 3.3 V. Hekate sd_end() also gates
++    // the SDMMC1 IO pads, which the original UEFI driver never ungates.
++    // Select 3.3 V before enabling those pads; preserve all other domains.
++    MmioOr32(PMC_BASE + APBDEV_PMC_PWR_DET_VAL, SWITCHBSD_PMC_SDMMC1);
++    (VOID)MmioRead32(PMC_BASE + APBDEV_PMC_PWR_DET_VAL);
++    MmioAnd32(PMC_BASE + APBDEV_PMC_NO_IOPOWER, ~SWITCHBSD_PMC_SDMMC1);
++    (VOID)MmioRead32(PMC_BASE + APBDEV_PMC_NO_IOPOWER);
++
++    gpio_config(GPIO_PORT_E, GPIO_PIN_4, GPIO_MODE_GPIO);
++    gpio_write(GPIO_PORT_E, GPIO_PIN_4, GPIO_HIGH);
++    gpio_output_enable(GPIO_PORT_E, GPIO_PIN_4, GPIO_OUTPUT_ENABLE);
++    udelay(10000);
++
++    if (mSwitchSdDiag != NULL) {
++        mSwitchSdDiag->NoIoPowerBefore = Before;
++        mSwitchSdDiag->NoIoPowerAfter = MmioRead32(PMC_BASE + APBDEV_PMC_NO_IOPOWER);
++        mSwitchSdDiag->PowerDetect = MmioRead32(PMC_BASE + APBDEV_PMC_PWR_DET_VAL);
++    }
++}
++
++STATIC VOID
++SwitchBsdSdCommandDone(struct tegra_mmc_priv *priv, struct mmc_cmd *cmd, int Result)
++{
++    if (mSwitchSdDiag == NULL) return;
++    mSwitchSdDiag->CommandCount++;
++    mSwitchSdDiag->LastCommand = cmd->cmdidx;
++    mSwitchSdDiag->LastArgument = cmd->cmdarg;
++    mSwitchSdDiag->LastCommandResult = Result;
++    // Raw response register: it may be stale after a transport error.
++    mSwitchSdDiag->LastResponse = readl(&priv->reg->rspreg0);
++    mSwitchSdDiag->PresentState = readl(&priv->reg->prnsts);
++    mSwitchSdDiag->ClockControl = readw(&priv->reg->clkcon);
++    mSwitchSdDiag->PowerControl = readb(&priv->reg->pwrcon);
++    if (Result != 0 && mSwitchSdDiag->FirstErrorResult == 0) {
++        mSwitchSdDiag->FirstErrorCommand = cmd->cmdidx;
++        mSwitchSdDiag->FirstErrorResult = Result;
++    }
++}

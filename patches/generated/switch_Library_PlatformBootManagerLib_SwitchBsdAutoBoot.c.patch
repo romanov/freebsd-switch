@@ -1,0 +1,138 @@
+--- a/switch/Library/PlatformBootManagerLib/SwitchBsdAutoBoot.c
++++ b/switch/Library/PlatformBootManagerLib/SwitchBsdAutoBoot.c
+@@ -0,0 +1,135 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++#include <Uefi.h>
++#include <Library/UefiLib.h>
++#include <Library/UefiBootServicesTableLib.h>
++#include <Library/UefiBootManagerLib.h>
++#include <Library/MemoryAllocationLib.h>
++#include <Library/DevicePathLib.h>
++#include <Protocol/BlockIo.h>
++#include <Protocol/SimpleFileSystem.h>
++#include <Protocol/SwitchBsdSdStatus.h>
++#include <Protocol/PinMux.h>
++#include <Protocol/ClockManagement.h>
++#include <Protocol/UBootClockManagement.h>
++#include <Protocol/Pmic.h>
++
++VOID SwitchBsdAutoBoot(VOID);
++
++STATIC CONST CHAR16 *mSdStages[] = {
++    L"unknown", L"clock protocol", L"PMIC protocol", L"controller probe",
++    L"host reset", L"card negotiation", L"card setup", L"capacity",
++    L"sector 0 read", L"Block IO registration", L"ready"
++};
++
++VOID
++SwitchBsdAutoBoot(VOID)
++{
++    EFI_GUID DiagGuid = SWITCHBSD_SD_STATUS_GUID;
++    SWITCHBSD_SD_STATUS *Diag = NULL;
++    EFI_HANDLE *Handles = NULL;
++    UINTN Count = 0;
++    UINTN BlockCount = 0;
++    UINTN Index;
++    EFI_STATUS Status;
++    BOOLEAN TriedLoader = FALSE;
++    EFI_INPUT_KEY Key;
++    UINTN EventIndex;
++    VOID *Interface;
++
++    gST->ConOut->ClearScreen(gST->ConOut);
++    Print(L"SwitchBSD SD diagnostic build 7 (USB host disabled)\r\n\r\n");
++    Status = gBS->LocateProtocol(&gTegraPinMuxProtocolGuid, NULL, &Interface);
++    Print(L"Pin control: %r\r\n", Status);
++    Status = gBS->LocateProtocol(&gTegra210ClockManagementProtocolGuid, NULL, &Interface);
++    Print(L"Peripheral clocks: %r\r\n", Status);
++    Status = gBS->LocateProtocol(&gTegraUBootClockManagementProtocolGuid, NULL, &Interface);
++    Print(L"SD clocks: %r\r\n", Status);
++    Status = gBS->LocateProtocol(&gPmicProtocolGuid, NULL, &Interface);
++    Print(L"Power controller: %r\r\n", Status);
++    Status = EfiGetSystemConfigurationTable(&DiagGuid, (VOID **)&Diag);
++    if (!EFI_ERROR(Status) && Diag->Version == SWITCHBSD_SD_STATUS_VERSION) {
++        Print(L"SD stage: %s (%u)\r\n",
++              Diag->Stage < ARRAY_SIZE(mSdStages) ? mSdStages[Diag->Stage] : L"unknown",
++              Diag->Stage);
++        Print(L"SD status: %r (0x%lx)\r\n", Diag->Status, (UINT64)Diag->Status);
++        Print(L"Card result: %d, sectors: %Lu, bytes/sector: %u\r\n",
++              Diag->CardResult, Diag->Blocks, Diag->BlockSize);
++        if (Diag->Stage >= SwitchSdHost) {
++            Print(L"PMC NO_IOPOWER: %08x -> %08x; PWR_DET: %08x\r\n",
++                  Diag->NoIoPowerBefore, Diag->NoIoPowerAfter, Diag->PowerDetect);
++        }
++        if (Diag->CommandCount != 0) {
++            Print(L"Last CMD%u arg=%08x result=%d; raw response=%08x\r\n",
++                  Diag->LastCommand, Diag->LastArgument, Diag->LastCommandResult,
++                  Diag->LastResponse);
++            Print(L"Command IRQ=%08x present=%08x clock=%04x power=%02x\r\n",
++                  Diag->CommandInterrupt, Diag->PresentState,
++                  Diag->ClockControl, Diag->PowerControl);
++            if (Diag->FirstErrorResult != 0)
++                Print(L"First command error: CMD%u result=%d; commands sent=%u\r\n",
++                      Diag->FirstErrorCommand, Diag->FirstErrorResult, Diag->CommandCount);
++        }
++    } else {
++        Print(L"SD driver did not publish diagnostics; check driver dependencies.\r\n");
++    }
++    Status = gBS->LocateHandleBuffer(ByProtocol, &gEfiBlockIoProtocolGuid,
++                                     NULL, &Count, &Handles);
++    Print(L"Block devices: %u (%r)\r\n", (UINT32)Count, Status);
++    if (!EFI_ERROR(Status)) BlockCount = Count;
++    if (Handles != NULL) FreePool(Handles);
++    Handles = NULL;
++    Count = 0;
++    Status = gBS->LocateHandleBuffer(ByProtocol, &gEfiSimpleFileSystemProtocolGuid,
++                                     NULL, &Count, &Handles);
++    Print(L"FAT filesystems: %u (%r)\r\n", (UINT32)Count, Status);
++    if (!EFI_ERROR(Status)) {
++        for (Index = 0; Index < Count; Index++) {
++            EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Fs;
++            EFI_FILE_PROTOCOL *Root = NULL;
++            EFI_FILE_PROTOCOL *File = NULL;
++            EFI_DEVICE_PATH_PROTOCOL *Path;
++            EFI_BOOT_MANAGER_LOAD_OPTION Option;
++            Status = gBS->HandleProtocol(Handles[Index], &gEfiSimpleFileSystemProtocolGuid,
++                                         (VOID **)&Fs);
++            if (EFI_ERROR(Status)) continue;
++            Status = Fs->OpenVolume(Fs, &Root);
++            if (EFI_ERROR(Status)) continue;
++            Status = Root->Open(Root, &File, L"\\boot\\rootfs.ufs", EFI_FILE_MODE_READ, 0);
++            if (EFI_ERROR(Status)) { Root->Close(Root); continue; }
++            File->Close(File);
++            Status = Root->Open(Root, &File, L"\\EFI\\BOOT\\BOOTAA64.EFI", EFI_FILE_MODE_READ, 0);
++            Root->Close(Root);
++            if (EFI_ERROR(Status)) continue;
++            File->Close(File);
++            Path = FileDevicePath(Handles[Index], L"\\EFI\\BOOT\\BOOTAA64.EFI");
++            if (Path == NULL) continue;
++            Status = EfiBootManagerInitializeLoadOption(&Option, LoadOptionNumberUnassigned,
++                LoadOptionTypeBoot, LOAD_OPTION_ACTIVE, L"SwitchBSD FreeBSD", Path, NULL, 0);
++            FreePool(Path);
++            if (EFI_ERROR(Status)) continue;
++            TriedLoader = TRUE;
++            Print(L"\r\nSWITCHBSD: starting FreeBSD loader on filesystem %u\r\n", (UINT32)Index);
++            EfiBootManagerBoot(&Option);
++            Print(L"FreeBSD loader returned: %r (0x%lx)\r\n", Option.Status, (UINT64)Option.Status);
++            EfiBootManagerFreeLoadOption(&Option);
++        }
++    }
++    if (Handles != NULL) FreePool(Handles);
++    if (!TriedLoader) {
++        if (BlockCount == 0) {
++            Print(L"\r\nSD failed before filesystem access. Keep this card's contents.\r\n");
++        } else {
++            Print(L"\r\nLoader files not found on a readable FAT filesystem.\r\n");
++            Print(L"Requires FAT32: \\EFI\\BOOT\\BOOTAA64.EFI and \\boot\\rootfs.ufs\r\n");
++        }
++    }
++    Print(L"\r\nRecord this screen, then power off to update the SD card.\r\n");
++    Print(L"USB host enabled; keyboard should work in this UEFI screen.\r\n");
++    gBS->SetWatchdogTimer(0, 0, 0, NULL);
++    gST->ConIn->Reset(gST->ConIn, FALSE);
++    do {
++        Status = gBS->WaitForEvent(1, &gST->ConIn->WaitForKey, &EventIndex);
++        if (EFI_ERROR(Status)) { gBS->Stall(100000); continue; }
++        Status = gST->ConIn->ReadKeyStroke(gST->ConIn, &Key);
++    } while (EFI_ERROR(Status));
++}

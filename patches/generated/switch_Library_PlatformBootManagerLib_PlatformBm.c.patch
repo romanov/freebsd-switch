@@ -1,0 +1,19 @@
+--- a/switch/Library/PlatformBootManagerLib/PlatformBm.c
++++ b/switch/Library/PlatformBootManagerLib/PlatformBm.c
+@@ -35,6 +35,8 @@
+ 
+ #include "PlatformBm.h"
+ 
++VOID SwitchBsdAutoBoot(VOID);
++
+ #define DP_NODE_LEN(Type) { (UINT8)sizeof (Type), (UINT8)(sizeof (Type) >> 8) }
+ 
+ #pragma pack (1)
+@@ -571,6 +573,7 @@
+   // Connect the rest of the devices.
+   //
+   EfiBootManagerConnectAll ();
++  SwitchBsdAutoBoot();
+ 
+   Status = gBS->LocateProtocol (&gEsrtManagementProtocolGuid, NULL,
+                   (VOID **)&EsrtManagement);

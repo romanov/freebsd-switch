@@ -1,0 +1,28 @@
+--- a/switch/Library/PlatformBootManagerLib/PlatformBootManagerLib.inf
++++ b/switch/Library/PlatformBootManagerLib/PlatformBootManagerLib.inf
+@@ -33,11 +33,13 @@
+ 
+ [Sources]
+   PlatformBm.c
++  SwitchBsdAutoBoot.c
+ 
+ [Packages]
+   MdeModulePkg/MdeModulePkg.dec
+   MdePkg/MdePkg.dec
+   ShellPkg/ShellPkg.dec
++  NintendoSwitchPkg/NintendoSwitch.dec
+ 
+ [LibraryClasses]
+   BaseLib
+@@ -78,6 +80,11 @@
+   gUefiShellFileGuid
+ 
+ [Protocols]
++  gEfiBlockIoProtocolGuid
++  gTegraPinMuxProtocolGuid
++  gTegra210ClockManagementProtocolGuid
++  gTegraUBootClockManagementProtocolGuid
++  gPmicProtocolGuid
+   gEfiDevicePathProtocolGuid
+   gEfiGraphicsOutputProtocolGuid
+   gEfiLoadedImageProtocolGuid

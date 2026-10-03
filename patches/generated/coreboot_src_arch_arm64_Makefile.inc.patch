@@ -1,0 +1,17 @@
+--- a/coreboot/src/arch/arm64/Makefile.inc
++++ b/coreboot/src/arch/arm64/Makefile.inc
+@@ -170,10 +170,10 @@
+ # The \# \" complications exist to satisfy both gnu make's parser and editors
+ # with non-semantic quote-handling (that would assume that this line starts a
+ # multi line string.
+-BL31_MAKEARGS += BUILD_MESSAGE_TIMESTAMP='"$(shell grep "\#define COREBOOT_BUILD\>" $(obj)/build.h |cut -d\" -f2 \# \")"'
+-
+-BL31_CFLAGS := -fno-pic -fno-stack-protector -Wno-deprecated-declarations -Wno-unused-function
+-BL31_LDFLAGS := --emit-relocs
++BL31_MAKEARGS += BUILD_MESSAGE_TIMESTAMP='"SwitchBSD pinned source build"'
++
++BL31_CFLAGS := -Wno-error=array-bounds -fno-pic -fno-stack-protector -Wno-deprecated-declarations -Wno-unused-function
++BL31_LDFLAGS := --emit-relocs --no-warn-rwx-segments
+ 
+ BL31 := $(obj)/bl31.elf
+ 

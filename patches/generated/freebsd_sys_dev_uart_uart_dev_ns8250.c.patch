@@ -1,0 +1,10 @@
+--- a/freebsd/sys/dev/uart/uart_dev_ns8250.c
++++ b/freebsd/sys/dev/uart/uart_dev_ns8250.c
+@@ -501,6 +501,7 @@
+ UART_ACPI_SPCR_CLASS(acpi_spcr_compat_data);
+ 
+ static struct acpi_uart_compat_data acpi_compat_data[] = {
++	{"NVDA0100", &uart_ns8250_class, 2, 1, 408000000, 0, "Tegra210 UART (Switch experiment)"},
+ 	{"AMD0020",	&uart_ns8250_class, 2, 0, 48000000, UART_F_BUSY_DETECT, "AMD / Synopsys Designware UART"},
+ 	{"AMDI0020", &uart_ns8250_class, 2, 0, 48000000, UART_F_BUSY_DETECT, "AMD / Synopsys Designware UART"},
+ 	{"APMC0D08", &uart_ns8250_class, 2, 4, 0, 0, "APM compatible UART"},

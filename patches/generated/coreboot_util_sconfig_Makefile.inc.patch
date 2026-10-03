@@ -1,0 +1,11 @@
+--- a/coreboot/util/sconfig/Makefile.inc
++++ b/coreboot/util/sconfig/Makefile.inc
+@@ -2,6 +2,8 @@
+ sconfigobj += lex.yy.o
+ sconfigobj += sconfig.tab.o
+ sconfigobj += main.o
++
++$(addprefix $(objutil)/sconfig/,$(sconfigobj)): util/sconfig/sconfig.h
+ 
+ SCONFIGFLAGS += -I$(top)/util/sconfig -I$(objutil)/sconfig
+ 

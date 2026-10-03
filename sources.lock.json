@@ -1,0 +1,82 @@
+[
+  {
+    "name": "switch",
+    "url": "https://codeload.github.com/imbushuo/NintendoSwitchPkg/tar.gz/09c3ade486aa76b53557d930ed291760cea41cb0",
+    "revision": "09c3ade486aa76b53557d930ed291760cea41cb0",
+    "sha256": "d368935e7135f7b378125356c10890d9b6ed8dcca604d1ed2ab4d15f135486b2",
+    "archive": "switch-09c3ade486aa76b53557d930ed291760cea41cb0.tar.gz",
+    "strip": 1
+  },
+  {
+    "name": "coreboot",
+    "url": "https://codeload.github.com/imbushuo/Coreboot/tar.gz/0cca7c887e77401e25ac5ed7b4fae7c32060cfe6",
+    "revision": "0cca7c887e77401e25ac5ed7b4fae7c32060cfe6",
+    "sha256": "d8e2566a570b913fd62bb741d9951b723c8bca4c0ad5a17390a33c6273a57f3e",
+    "archive": "coreboot-0cca7c887e77401e25ac5ed7b4fae7c32060cfe6.tar.gz",
+    "strip": 1
+  },
+  {
+    "name": "hekate",
+    "url": "https://codeload.github.com/CTCaer/hekate/tar.gz/45cd81ed08e30a26ba380958c7e20b55c342834b",
+    "revision": "45cd81ed08e30a26ba380958c7e20b55c342834b",
+    "sha256": "85cf0cdef8eadb70f1b853cfc163ce1819c0af06c1703f8be7f88f403f4c246f",
+    "archive": "hekate-45cd81ed08e30a26ba380958c7e20b55c342834b.tar.gz",
+    "strip": 1
+  },
+  {
+    "name": "edk2",
+    "url": "https://codeload.github.com/tianocore/edk2/tar.gz/7b4a99be8a39c12d3a7fc4b8db9f0eab4ac688d5",
+    "revision": "7b4a99be8a39c12d3a7fc4b8db9f0eab4ac688d5",
+    "sha256": "9c9a53e9097c3cf605622ad2a3e8ac5fdfd84de3662de8e5e5d8b55bf559c631",
+    "archive": "edk2-7b4a99be8a39c12d3a7fc4b8db9f0eab4ac688d5.tar.gz",
+    "strip": 1
+  },
+  {
+    "name": "edk2/BaseTools/Source/C/BrotliCompress/brotli",
+    "url": "https://codeload.github.com/google/brotli/tar.gz/666c3280cc11dc433c303d79a83d4ffbdd12cc8d",
+    "revision": "666c3280cc11dc433c303d79a83d4ffbdd12cc8d",
+    "sha256": "cd82ce69defa40e9e36443e59d90aa5f8c6013024fae6a2de8c31afc2c707065",
+    "archive": "edk2_BaseTools_Source_C_BrotliCompress_brotli-666c3280cc11dc433c303d79a83d4ffbdd12cc8d.tar.gz",
+    "strip": 1
+  },
+  {
+    "name": "edk2/MdeModulePkg/Library/BrotliCustomDecompressLib/brotli",
+    "url": "https://codeload.github.com/google/brotli/tar.gz/666c3280cc11dc433c303d79a83d4ffbdd12cc8d",
+    "revision": "666c3280cc11dc433c303d79a83d4ffbdd12cc8d",
+    "sha256": "cd82ce69defa40e9e36443e59d90aa5f8c6013024fae6a2de8c31afc2c707065",
+    "archive": "edk2_MdeModulePkg_Library_BrotliCustomDecompressLib_brotli-666c3280cc11dc433c303d79a83d4ffbdd12cc8d.tar.gz",
+    "strip": 1
+  },
+  {
+    "name": "edk2/ArmPkg/Library/ArmSoftFloatLib/berkeley-softfloat-3",
+    "url": "https://codeload.github.com/ucb-bar/berkeley-softfloat-3/tar.gz/b64af41c3276f97f0e181920400ee056b9c88037",
+    "revision": "b64af41c3276f97f0e181920400ee056b9c88037",
+    "sha256": "faae889814ea6a292f7ca03d9b36e6c7e95bab2a64777804883cc822b8d48757",
+    "archive": "edk2_ArmPkg_Library_ArmSoftFloatLib_berkeley-softfloat-3-b64af41c3276f97f0e181920400ee056b9c88037.tar.gz",
+    "strip": 1
+  },
+  {
+    "name": "coreboot/3rdparty/arm-trusted-firmware",
+    "url": "https://codeload.github.com/fail0verflow/switch-arm-trusted-firmware/tar.gz/66c6a0c87982db087b3bab35316e7a59127c12fd",
+    "revision": "66c6a0c87982db087b3bab35316e7a59127c12fd",
+    "sha256": "8d3af1dcff97468d78ccdf3df3e07a72a9ffe2d6738153a81ff1a41ba6889fe5",
+    "archive": "coreboot_3rdparty_arm-trusted-firmware-66c6a0c87982db087b3bab35316e7a59127c12fd.tar.gz",
+    "strip": 1
+  },
+  {
+    "name": "coreboot/3rdparty/vboot",
+    "url": "https://codeload.github.com/coreboot/vboot/tar.gz/e0b3841863281a3fc3b188bfbab55d401fabdc73",
+    "revision": "e0b3841863281a3fc3b188bfbab55d401fabdc73",
+    "sha256": "c48515cf509a6798f97171416174de367a3fecc492b72d8218778e52418d2c20",
+    "archive": "coreboot_3rdparty_vboot-e0b3841863281a3fc3b188bfbab55d401fabdc73.tar.gz",
+    "strip": 1
+  },
+  {
+    "name": "freebsd",
+    "url": "https://download.freebsd.org/releases/arm64/aarch64/15.1-RELEASE/src.txz",
+    "revision": "15.1-RELEASE",
+    "sha256": "cf5762da53fd52e1eaf0f9ceee9bf58cbe314c821031d0d9ffa76823185a89e1",
+    "archive": "src.txz",
+    "strip": 2
+  }
+]

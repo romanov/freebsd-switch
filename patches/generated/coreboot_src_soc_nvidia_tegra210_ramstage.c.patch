@@ -1,0 +1,11 @@
+--- a/coreboot/src/soc/nvidia/tegra210/ramstage.c
++++ b/coreboot/src/soc/nvidia/tegra210/ramstage.c
+@@ -72,7 +72,7 @@
+ 	/* Needed to store MTC data */
+ 	cbmem_initialize();
+ 
+-	if (tegra210_run_mtc() != 0)
++	if (IS_ENABLED(CONFIG_HAVE_MTC) && tegra210_run_mtc() != 0)
+ 		printk(BIOS_ERR, "MTC: No training data.\n");
+ 
+ 	/* Jump to boot state machine in common code. */

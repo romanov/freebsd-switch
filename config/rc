@@ -1,0 +1,15 @@
+#!/bin/sh
+PATH=/rescue:/sbin:/bin
+export PATH
+mount -uw /
+mount -t devfs devfs /dev
+hostname freebsd-switch
+echo
+echo 'SWITCHBSD: USERLAND_READY'
+uname -a
+sysctl hw.machine hw.model hw.physmem kern.smp.active
+echo 'RAM root is ready. Changes disappear on reboot.'
+echo 'Diagnostic shell on /dev/console; type exit to restart it.'
+while :; do
+    /bin/sh -i </dev/console >/dev/console 2>&1
+done

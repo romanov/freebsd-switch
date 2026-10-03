@@ -1,0 +1,32 @@
+--- a/coreboot/Makefile.inc
++++ b/coreboot/Makefile.inc
+@@ -148,17 +148,15 @@
+ 
+ #######################################################################
+ # Helper functions for ramstage postprocess
+-spc :=
+-spc +=
+-$(spc) :=
+-$(spc) +=
++empty :=
++spc := $(empty) $(empty)
+ comma := ,
+ 
+ # files-in-dir-recursive,dir,files
+ files-in-dir-recursive=$(filter $(1)%,$(2))
+ 
+ # parent-dir,dir/
+-parent-dir=$(dir $(if $(patsubst /%,,$(1)),,/)$(subst $( ),/,$(strip $(subst /, ,$(1)))))
++parent-dir=$(dir $(if $(patsubst /%,,$(1)),,/)$(subst $(spc),/,$(strip $(subst /, ,$(1)))))
+ 
+ # filters out exactly the directory specified
+ # filter-out-dir,dir_to_keep,dirs
+@@ -426,7 +424,7 @@
+ # Disable style checks for now
+ ADAFLAGS_common += -gnatyN
+ 
+-LDFLAGS_common := --gc-sections -nostdlib -nostartfiles -static --emit-relocs
++LDFLAGS_common := --gc-sections -nostdlib -static --emit-relocs
+ 
+ ifeq ($(CONFIG_COMPILER_GCC),y)
+ # cf. commit f69a99db (coreboot: x86: enable gc-sections)

@@ -1,0 +1,221 @@
+--- a/switch/Drivers/SdMmcDxe/SdMmc.c
++++ b/switch/Drivers/SdMmcDxe/SdMmc.c
+@@ -36,6 +36,8 @@
+ #include "Include/SdMmc.h"
+ #include "Include/HostOp.h"
+ #include "Include/EfiProto.h"
++#include <Library/MemoryAllocationLib.h>
++#include <Protocol/SwitchBsdSdStatus.h>
+ 
+ TEGRA210_UBOOT_CLOCK_MANAGEMENT_PROTOCOL* mClkProtocol;
+ PMIC_PROTOCOL* mPmicProtocol;
+@@ -43,6 +45,8 @@
+ TEGRA_MMC_PRIV mPriv;
+ struct mmc mMmcInstance;
+ struct blk_desc mBlkDesc;
++
++#include "SwitchBsdSdPlatform.h"
+ 
+ void tegra_mmc_set_power(
+     struct tegra_mmc_priv *priv,
+@@ -239,6 +243,7 @@
+ 	for (i = 0; i < retry; i++) 
+ 	{
+ 		mask = readl(&priv->reg->norintsts);
++		if (mSwitchSdDiag != NULL) mSwitchSdDiag->CommandInterrupt = mask;
+ 		/* Command Complete */
+ 		if (mask & TEGRA_MMC_NORINTSTS_CMD_COMPLETE) 
+ 		{
+@@ -400,7 +405,9 @@
+ 		bounce_buffer_start(&bbstate, buf, len, bbflags);
+ 	}
+ 
++	if (mSwitchSdDiag != NULL) mSwitchSdDiag->CommandInterrupt = 0;
+ 	ret = tegra_mmc_send_cmd_bounced(priv, cmd, data, &bbstate);
++	SwitchBsdSdCommandDone(priv, cmd, ret);
+ 
+ 	if (data)
+ 	{
+@@ -667,109 +674,92 @@
+         return EFI_NOT_FOUND;
+     }
+ 
+-    // power-gpios = <&gpio TEGRA_GPIO(E, 4) GPIO_ACTIVE_HIGH>;
+-	gpio_config(GPIO_PORT_E, GPIO_PIN_4, GPIO_MODE_GPIO);
+-	gpio_write(GPIO_PORT_E, GPIO_PIN_4, GPIO_HIGH);
+-	gpio_output_enable(GPIO_PORT_E, GPIO_PIN_4, GPIO_OUTPUT_ENABLE);
++    SwitchBsdSdPowerOn();
+ 
+     return EFI_SUCCESS;
+ }
+ 
++/* SPDX-License-Identifier: GPL-2.0-or-later
++ * Replacement entry point for the pinned Switch SD driver.
++ * The table is allocated separately from the driver image: it remains valid
++ * even if DXE unloads the driver after a failed entry point.
++ */
+ EFI_STATUS
+ EFIAPI
+-SdMmcDxeInitialize
+-(
+-    IN EFI_HANDLE         ImageHandle,
+-    IN EFI_SYSTEM_TABLE   *SystemTable
++SdMmcDxeInitialize (
++    IN EFI_HANDLE ImageHandle,
++    IN EFI_SYSTEM_TABLE *SystemTable
+ )
+ {
+     EFI_STATUS Status;
+-	BIO_INSTANCE *Instance;
+-
+-    Status = gBS->LocateProtocol(
+-        &gTegraUBootClockManagementProtocolGuid,
+-        NULL,
+-        (VOID**) &mClkProtocol
+-    );
+-
++    EFI_STATUS TableStatus;
++    EFI_GUID DiagGuid = SWITCHBSD_SD_STATUS_GUID;
++    SWITCHBSD_SD_STATUS *Diag;
++    BIO_INSTANCE *Instance = NULL;
++    UINT8 Sector[512];
++    int Ret;
++
++    Diag = AllocateZeroPool(sizeof(*Diag));
++    if (Diag == NULL) return EFI_OUT_OF_RESOURCES;
++    Diag->Version = SWITCHBSD_SD_STATUS_VERSION;
++    Diag->Status = EFI_NOT_READY;
++    TableStatus = gBS->InstallConfigurationTable(&DiagGuid, Diag);
++    if (EFI_ERROR(TableStatus)) {
++        FreePool(Diag);
++        return TableStatus;
++    }
++    mSwitchSdDiag = Diag;
++
++    Diag->Stage = SwitchSdClock;
++    Status = gBS->LocateProtocol(&gTegraUBootClockManagementProtocolGuid,
++                                 NULL, (VOID **)&mClkProtocol);
+     if (EFI_ERROR(Status)) goto exit;
+-
+-    Status = gBS->LocateProtocol(
+-        &gPmicProtocolGuid,
+-        NULL,
+-        (VOID**) &mPmicProtocol
+-    );
+-
++    Diag->Stage = SwitchSdPmic;
++    Status = gBS->LocateProtocol(&gPmicProtocolGuid, NULL, (VOID **)&mPmicProtocol);
+     if (EFI_ERROR(Status)) goto exit;
+-
++    Diag->Stage = SwitchSdProbe;
+     Status = SdControllerProbe();
+     if (EFI_ERROR(Status)) goto exit;
+-
+-	Status = TegraMmcInit();
+-	if (EFI_ERROR(Status)) goto exit;
+-
+-	// Check some commands
+-	int ret = SdFxInit();
+-	if (ret) 
+-	{
+-		Status = EFI_DEVICE_ERROR;
+-		goto exit;
+-	}
+-	ret = SdFxInitFinalize();
+-	if (ret) 
+-	{
+-		Status = EFI_DEVICE_ERROR;
+-		goto exit;
+-	}
+-
+-	if (mMmcInstance.has_init == 1)
+-	{
+-		// Run a self test
+-		//
+-		// Dump content to verify Read status
+-		//
+-		UINT8 BlkDump[512];
+-		ZeroMem(BlkDump, 512);
+-		BOOLEAN FoundMbr = FALSE;
+-		for (UINTN i = 0; i <= MIN(mBlkDesc.lba, 50); i++)
+-		{
+-			int blk = mmc_bread(i, 1, &BlkDump);
+-			if (blk)
+-			{
+-				if (BlkDump[510] == 0x55 && BlkDump[511] == 0xAA)
+-				{
+-					DEBUG((EFI_D_INFO, "MBR found at %d \n", i));
+-					FoundMbr = TRUE;
+-					break;
+-				}
+-				DEBUG((EFI_D_INFO, "MBR not found at %d \n", i));
+-			}
+-		}
+-
+-		if (!FoundMbr)
+-		{
+-			DEBUG((EFI_D_ERROR, "(Protective) MBR not found \n"));
+-			CpuDeadLoop();
+-		}
+-		
+-		// Install EFI protocol
+-		ASSERT(mBlkDesc.lba != 0);
+-		ASSERT(mBlkDesc.blksz != 0);
+-		Status = BioInstanceContructor(&Instance);
+-		if (EFI_ERROR(Status)) goto exit;
+-
+-		Instance->BlockMedia.BlockSize = mBlkDesc.blksz;
+-		Instance->BlockMedia.LastBlock = mBlkDesc.lba;
+-		Status = gBS->InstallMultipleProtocolInterfaces(
+-			&Instance->Handle,
+-			&gEfiBlockIoProtocolGuid,    
+-			&Instance->BlockIo,
+-			&gEfiDevicePathProtocolGuid, 
+-			&Instance->DevicePath,
+-			NULL
+-		);
+-	}
+-
++    Diag->Stage = SwitchSdHost;
++    Status = TegraMmcInit();
++    if (EFI_ERROR(Status)) goto exit;
++    Diag->Stage = SwitchSdCardInit;
++    Ret = SdFxInit();
++    Diag->CardResult = Ret;
++    if (Ret != 0) { Status = EFI_DEVICE_ERROR; goto exit; }
++    Diag->Stage = SwitchSdCardFinalize;
++    Ret = SdFxInitFinalize();
++    Diag->CardResult = Ret;
++    if (Ret != 0) { Status = EFI_DEVICE_ERROR; goto exit; }
++
++    Diag->Stage = SwitchSdCapacity;
++    Diag->Blocks = mBlkDesc.lba;
++    Diag->BlockSize = mBlkDesc.blksz;
++    if (mMmcInstance.has_init != 1 || mBlkDesc.lba == 0 ||
++        mBlkDesc.blksz != sizeof(Sector)) {
++        Status = EFI_UNSUPPORTED;
++        goto exit;
++    }
++    Diag->Stage = SwitchSdReadSector;
++    Ret = mmc_bread(0, 1, Sector);
++    Diag->CardResult = Ret;
++    if (Ret != 1) { Status = EFI_DEVICE_ERROR; goto exit; }
++    // Partition and FAT drivers interpret sector zero. Do not dead-loop on a
++    // missing MBR signature, or scan unrelated sectors looking for one.
++    Diag->Stage = SwitchSdPublish;
++    Status = BioInstanceContructor(&Instance);
++    if (EFI_ERROR(Status)) goto exit;
++    Instance->BlockMedia.BlockSize = mBlkDesc.blksz;
++    Instance->BlockMedia.LastBlock = mBlkDesc.lba - 1;
++    Status = gBS->InstallMultipleProtocolInterfaces(
++        &Instance->Handle,
++        &gEfiBlockIoProtocolGuid, &Instance->BlockIo,
++        &gEfiDevicePathProtocolGuid, &Instance->DevicePath, NULL);
++    if (EFI_ERROR(Status)) { FreePool(Instance); goto exit; }
++    Diag->Stage = SwitchSdReady;
+ exit:
++    Diag->Status = Status;
++    DEBUG((DEBUG_INFO, "SWITCHBSD: SD stage=%u status=%r card=%d blocks=%Lu\n",
++           Diag->Stage, Status, Diag->CardResult, Diag->Blocks));
+     return Status;
+-}+}

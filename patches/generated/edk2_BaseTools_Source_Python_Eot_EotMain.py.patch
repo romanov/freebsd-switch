@@ -1,0 +1,11 @@
+--- a/edk2/BaseTools/Source/Python/Eot/EotMain.py
++++ b/edk2/BaseTools/Source/Python/Eot/EotMain.py
+@@ -196,7 +196,7 @@
+         return len(self)
+ 
+     def _GetUiString(self):
+-        return codecs.utf_16_decode(self[0:-2].tostring())[0]
++        return codecs.utf_16_decode(self[0:-2].tobytes())[0]
+ 
+     String = property(_GetUiString)
+ 

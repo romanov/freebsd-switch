@@ -1,0 +1,10 @@
+--- a/switch/Drivers/SdMmcDxe/SdMmcDxe.inf
++++ b/switch/Drivers/SdMmcDxe/SdMmcDxe.inf
+@@ -19,6 +19,7 @@
+   NintendoSwitchPkg/NintendoSwitch.dec
+ 
+ [LibraryClasses]
++  MemoryAllocationLib
+   ArmLib
+   BaseLib
+   ReportStatusCodeLib

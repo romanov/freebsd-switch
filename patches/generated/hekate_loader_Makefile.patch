@@ -1,0 +1,10 @@
+--- a/hekate/loader/Makefile
++++ b/hekate/loader/Makefile
+@@ -59,6 +59,7 @@
+ 	@$(CC) $(CFLAGS) -c $< -o $@
+ 
+ $(OBJS): $(BUILDDIR)
++$(BUILDDIR)/loader.o: payload_00.h payload_01.h
+ 
+ $(BUILDDIR):
+ 	@mkdir -p "$(BUILDDIR)"

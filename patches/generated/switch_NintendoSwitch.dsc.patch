@@ -1,0 +1,10 @@
+--- a/switch/NintendoSwitch.dsc
++++ b/switch/NintendoSwitch.dsc
+@@ -46,6 +46,7 @@
+   gEfiMdeModulePkgTokenSpaceGuid.PcdTurnOffUsbLegacySupport|TRUE
+ 
+ [LibraryClasses.common]
++  RegisterFilterLib|MdePkg/Library/RegisterFilterLibNull/RegisterFilterLibNull.inf
+   # ARM Architectural Libraries
+   ArmLib|ArmPkg/Library/ArmLib/ArmBaseLib.inf
+   ArmMmuLib|ArmPkg/Library/ArmMmuLib/ArmMmuBaseLib.inf

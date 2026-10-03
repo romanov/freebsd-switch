@@ -1,0 +1,4 @@
+include GENERIC
+ident SWITCHDIAG
+# Start with the known GENERIC device set. Root is a preloaded md(4) image.
+options DDB

@@ -1,0 +1,11 @@
+--- a/coreboot/src/soc/nvidia/tegra210/bootblock.c
++++ b/coreboot/src/soc/nvidia/tegra210/bootblock.c
+@@ -160,7 +160,7 @@
+ 	// enable JTAG at the earliest stage
+ 	enable_jtag();
+ 
+-	mbist_workaround();
++	/* Hekate has already performed MBIST and initialized SDRAM. */
+ 
+ 	clock_early_uart();
+ 

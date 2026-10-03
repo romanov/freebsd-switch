@@ -1,0 +1,11 @@
+--- a/switch/Drivers/PinMuxDxe/PinMux.c
++++ b/switch/Drivers/PinMuxDxe/PinMux.c
+@@ -48,7 +48,7 @@
+     Status = gBS->InstallMultipleProtocolInterfaces(
+         &ProtoHandle,
+         &gTegraPinMuxProtocolGuid,
+-        mPinMuxProtocol,
++        &mPinMuxProtocol,
+         NULL
+     );
+ 

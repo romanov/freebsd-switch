@@ -1,0 +1,6 @@
+/sources/
+/cache/
+/build/
+/dist/
+/logs/
+__pycache__/

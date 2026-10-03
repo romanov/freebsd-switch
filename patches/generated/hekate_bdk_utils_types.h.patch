@@ -1,0 +1,10 @@
+--- a/hekate/bdk/utils/types.h
++++ b/hekate/bdk/utils/types.h
+@@ -19,6 +19,7 @@
+ #define _TYPES_H_
+ 
+ #include <assert.h>
++#include <stdint.h>
+ 
+ /* Types */
+ typedef signed char s8;

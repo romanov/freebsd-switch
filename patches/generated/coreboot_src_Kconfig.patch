@@ -1,0 +1,11 @@
+--- a/coreboot/src/Kconfig
++++ b/coreboot/src/Kconfig
+@@ -996,7 +996,7 @@
+ 	default n
+ 
+ config WARNINGS_ARE_ERRORS
+-	bool
++	bool "Treat compiler warnings as errors"
+ 	default y
+ 
+ # The four POWER_BUTTON_DEFAULT_ENABLE, POWER_BUTTON_DEFAULT_DISABLE,
