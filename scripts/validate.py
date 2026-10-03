@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Artifact checks that do not execute target binaries or touch disk devices."""
 from pathlib import Path
+import json
 import struct
 import subprocess
 import sys
 import tempfile
 import zipfile
-from build import ROOT, SRC, BUILD, DIST, USB_UPDATE_FILES, digest, check_hash
+from build import (ROOT, SRC, BUILD, DIST, USB_UPDATE_FILES, DIAGNOSTIC_UPDATE_FILES,
+                   DIAGNOSTIC_TOOLS, RESCUE_TOOLS, digest, check_hash)
 
 
 def elf_aarch64(path, static=False):
@@ -113,6 +115,33 @@ def archive_build_time(archive):
     return value
 
 
+def diagnostic_root(root):
+    for name in DIAGNOSTIC_TOOLS:
+        path = root / "rescue" / name
+        elf_aarch64(path, static=True)
+        if not path.stat().st_mode & 0o111:
+            raise RuntimeError("Diagnostic tool is not executable: " + name)
+    rescue = root / "rescue/rescue"
+    for name in RESCUE_TOOLS:
+        if not (root / "rescue" / name).samefile(rescue):
+            raise RuntimeError("Invalid rescue applet: " + name)
+    for name in (*RESCUE_TOOLS, *DIAGNOSTIC_TOOLS):
+        if not (root / "bin" / name).samefile(root / "rescue" / name):
+            raise RuntimeError("Invalid diagnostic command alias: " + name)
+    report = root / "bin/switchbsd-report"
+    if not report.stat().st_mode & 0o111:
+        raise RuntimeError("Diagnostic report command is not executable")
+    check_hash(report, digest(ROOT / "config/switchbsd-report"))
+    check_hash(root / "root/DIAGNOSTICS.txt", digest(ROOT / "docs/diagnostics.md"))
+    identity = json.loads((root / "etc/switchbsd-build.json").read_text())
+    check_hash(report, identity["report_sha256"])
+    check_hash(BUILD / "sd/boot/kernel/kernel", identity["kernel_sha256"])
+    check_hash(BUILD / "sd/switchbsd/coreboot.rom", identity["firmware_sha256"])
+    expected = "SwitchBSD build time (UTC): " + identity["built_at"]
+    if (BUILD / "sd/switchbsd/BUILD-TIME.txt").read_text().strip() != expected:
+        raise RuntimeError("RAM-root and SD build times do not match")
+
+
 def main():
     firmware()
     if "--firmware" in sys.argv:
@@ -123,6 +152,8 @@ def main():
     elf_aarch64(sd / "boot/kernel/kernel")
     for name in ("sbin/init", "rescue/rescue", "rescue/uname"):
         elf_aarch64(BUILD / "root" / name, static=True)
+    diagnostic_root(BUILD / "root")
+    check_hash(sd / "boot/rootfs.ufs", digest(BUILD / "rootfs.ufs"))
     config = (sd / "boot/loader.conf").read_text()
     for value in ('mfsroot_type="mfs_root"', 'mfsroot_name="/boot/rootfs.ufs"',
                   'vfs.root.mountfrom="ufs:/dev/md0"',
@@ -176,6 +207,16 @@ def main():
         for name in USB_UPDATE_FILES:
             if archive.read(name) != (sd / name).read_bytes():
                 raise RuntimeError("USB update does not match SD bundle: " + name)
+    with zipfile.ZipFile(DIST / "freebsd-switch-15.1-diagnostics-update.zip") as archive:
+        if archive.testzip() is not None:
+            raise RuntimeError("Corrupt diagnostics update ZIP archive")
+        if archive_build_time(archive) != build_time:
+            raise RuntimeError("ZIP build times do not match")
+        if set(archive.namelist()) != set(DIAGNOSTIC_UPDATE_FILES):
+            raise RuntimeError("Unexpected files in diagnostics update ZIP archive")
+        for name in DIAGNOSTIC_UPDATE_FILES:
+            if archive.read(name) != (sd / name).read_bytes():
+                raise RuntimeError("Diagnostics update does not match SD bundle: " + name)
     for line in (DIST / "SHA256SUMS").read_text().splitlines():
         sha, name = line.split("  ", 1)
         check_hash(DIST / name, sha)

@@ -3,8 +3,9 @@
 Target: original Nintendo Switch **Erista / Tegra210**. This is an experimental
 boot bundle, not a supported FreeBSD hardware port. **FreeBSD 15.1 has reached
 userland and a root shell prompt on the Switch display.** The hardware photo
-shows `SWITCHBSD: USERLAND_READY`; physical keyboard/UART input remains
-unverified. See the [hardware boot record](docs/hardware-boot-2026-10-03.md).
+shows `SWITCHBSD: USERLAND_READY`; the user has also confirmed USB keyboard
+input with build 8. Physical UART input remains unverified.
+See the [hardware boot record](docs/hardware-boot-2026-10-03.md).
 The OS image can also be tested independently under ARM64 QEMU.
 
 Boot chain:
@@ -30,8 +31,15 @@ USB builds produced a black screen before UEFI.
 Build 8 adds a USB keyboard for the FreeBSD shell through a USB-C OTG adapter;
 see the [USB keyboard update](USB-UPDATE.md). The firmware powers the port and
 starts the USB1 controller after the screen is up, without a UEFI USB driver,
-and a small FreeBSD driver takes the controller over. It is not yet tested on
-hardware; `switchbsd/usb-host-disable` on the SD card returns to build 7 behaviour.
+and a small FreeBSD driver takes the controller over. Keyboard input is now
+user-confirmed on hardware; `switchbsd/usb-host-disable` on the SD card returns
+to build 7 behaviour.
+
+The [diagnostic RAM-root update](docs/diagnostics.md) adds `usbconfig`, `devinfo`,
+`diskinfo`, `sha256`, file/paging tools and `switchbsd-report`. At the shell,
+run `switchbsd-report > /tmp/report.txt`, then `less /tmp/report.txt`. Reports
+include build identity, USB/device/storage details and kernel logs. Files in
+`/tmp` disappear on reboot.
 
 For the subsequent FreeBSD screen followed by a white rectangle, apply the
 [screen console update](CONSOLE-UPDATE.md). It enables kernel output on both
@@ -78,6 +86,7 @@ files remain in `cache/originals/`. A second build reuses existing objects.
 - `dist/freebsd-switch-15.1-firmware-update.zip`: small firmware-only update.
 - `dist/freebsd-switch-15.1-console-update.zip`: small screen-console configuration update.
 - `dist/freebsd-switch-15.1-usb-update.zip`: build 8 firmware, kernel and RAM root for the USB keyboard.
+- `dist/freebsd-switch-15.1-diagnostics-update.zip`: diagnostic RAM root and guide for an existing build 8 installation.
 - Every ZIP contains `switchbsd/BUILD-TIME.txt` and carries the same UTC build
   time in its archive comment.
 - `dist/freebsd-switch-15.1.img`: standalone MBR/FAT32 disk image.
@@ -110,7 +119,8 @@ Diagnostic shell on /dev/console; type exit to restart it.
 ```
 
 `make smoke` boots a copy using QEMU's own UEFI and PL011 serial device, supplies
-an entropy device, and verifies that a command actually executes in the shell.
+entropy and a virtual USB keyboard, and checks the shell, diagnostic tools,
+report collection and a known SHA-256 result.
 Set `QEMU_EFI` to override `/usr/local/share/qemu/edk2-aarch64-code.fd`, and
 `QEMU_TIMEOUT` to override the 300-second timeout. QEMU does not test the Switch
 firmware, Tegra drivers, physical UART wiring or the Hekate/Coreboot handoff.

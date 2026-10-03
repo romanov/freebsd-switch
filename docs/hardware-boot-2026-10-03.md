@@ -29,7 +29,7 @@ build, not independent verification of the card's contents. Distribution files
 were not rebuilt solely for this documentation update; their metadata predates
 this hardware observation.
 
-Next unverified milestone: enter and execute a command through physical input.
+At the time of this photo, the next unverified milestone was physical input.
 For the existing UART path, `boot_serial="YES"` makes UART the userland console;
 the screen-primary default is `NO`. Consult `boot-test.md` before connecting a
 serial adapter. Builds 4–6 attempted firmware USB-host input but produced a
@@ -39,3 +39,17 @@ path to restore the last known-good display boot.
 The user subsequently confirmed that build 7 reaches FreeBSD userland again.
 This is a user report rather than a new photo or binary read-back; keyboard
 input remains unverified.
+
+## Build 8 keyboard confirmation
+
+The user subsequently reports: "keyboard is working". This confirms physical
+USB keyboard input by user report with build 8; no new photo, detailed device
+inventory, endurance test or SD-card read-back was supplied. UART input and
+USB storage remain unverified.
+
+Before creating the diagnostic RAM-root update, the local distribution,
+checksums, RAM root and loader configuration were preserved under
+`build/hardware-keyboard-2026-10-03/`. `observation.json` records the report and
+the scope of that evidence. The new diagnostic image requires a separate
+hardware check; build 8's keyboard confirmation does not validate new userland
+tools automatically.

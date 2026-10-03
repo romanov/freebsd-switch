@@ -3,8 +3,9 @@
 **FreeBSD 15.1 reached userland and a root shell prompt on the Switch.** The
 user's `/home/tester/Pictures/switch2.jpg` shows kernel output, the UFS RAM root,
 `SWITCHBSD: USERLAND_READY`, `uname`/`sysctl` output and the final `#` prompt.
-This follows build 7 firmware and the screen console update. Physical keyboard
-or UART input has not yet been demonstrated. See `docs/hardware-boot-2026-10-03.md`.
+This follows build 7 firmware and the screen console update. The user has since
+confirmed physical USB keyboard input with build 8. UART input remains
+unverified. See `docs/hardware-boot-2026-10-03.md`.
 
 ## Delivered
 
@@ -225,3 +226,43 @@ Not yet done:
 Next hardware step: plug the keyboard in before power-on, photograph the build
 8 USB lines, then type `echo USB_OK` at the `#` prompt. Afterwards unplug the
 adapter and boot Hekate once; that restores charge mode.
+
+## Diagnostic image revision 1 — 2026-10-03
+
+The user confirms that build 8's keyboard works. Before updating userland,
+the local distribution, checksums, RAM root and loader configuration were
+preserved in `build/hardware-keyboard-2026-10-03/`, with the user's report
+recorded in `observation.json`. No SD-card read-back or new photo is claimed.
+
+The diagnostic RAM root adds static ARM64 `usbconfig`, `devinfo`, `diskinfo`,
+`sha256` and `timeout`, plus rescue file/paging and storage tools. The
+`switchbsd-report` command collects build identity, USB/devices, storage,
+settings and kernel logs. Probes have time limits and report failures without
+discarding the remaining sections. Usage: `switchbsd-report > /tmp/report.txt`
+then `less /tmp/report.txt`. Reports remain volatile unless explicitly copied
+to mounted persistent storage. See `docs/diagnostics.md`.
+
+Delivery: `dist/freebsd-switch-15.1-diagnostics-update.zip` (about 10 MiB),
+containing only the RAM root, guide and build timestamp. The full SD ZIP/image
+and USB update also include the new RAM root. Firmware, Hekate payload, kernel
+and loader configuration were compared byte-for-byte with the preserved
+working bundle and are unchanged. The root remains 128 MiB, with about
+23 MiB of staged files.
+
+Validation completed:
+- `make image` and `make validate` passed, including static architecture checks,
+  command aliases, build identity, ZIP contents and distribution checksums.
+- `make test`: 18 tests passed, including partial reports after probe errors
+  and timeouts. The Clang unused-helper fix from the previous investigation
+  remains included.
+- `make smoke`: QEMU executed the shell, USB and storage tools, pager, a real
+  timeout, a known SHA-256 result and the report with zero failed probes.
+  The harness now sends commands in paced chunks and checks each step.
+- Logs: `logs/image-diagnostics.log`, `logs/verification-diagnostics.log`,
+  `logs/tests-diagnostics.log`, `logs/smoke-diagnostics.log`,
+  `logs/qemu-uart.log` and `logs/qemu-diagnostics-report.txt`.
+
+The diagnostic update still needs a Switch hardware check. Next: back up the
+card's `boot/rootfs.ufs`, extract the diagnostic update, boot and collect a
+report. Confirm that it identifies the keyboard and Tegra controller, and
+that the pager returns to the shell. Existing OTG power behavior is unchanged.

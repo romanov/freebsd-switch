@@ -1,0 +1,64 @@
+#!/bin/sh
+# Read-only diagnostic collection; redirect stdout to save a report.
+case "$#:$1" in
+    0:) ;;
+    1:-h|1:--help)
+        echo 'Usage: switchbsd-report > /tmp/switchbsd-report.txt'
+        echo 'View with: less /tmp/switchbsd-report.txt'
+        echo 'Reports in /tmp disappear on reboot. See /root/DIAGNOSTICS.txt.'
+        exit 0 ;;
+    *) echo 'Usage: switchbsd-report [--help]' >&2; exit 2 ;;
+esac
+
+if ! command -v timeout >/dev/null 2>&1; then
+    echo 'switchbsd-report: timeout is missing; reinstall the diagnostic RAM root.' >&2
+    exit 1
+fi
+
+failures=0
+run() {
+    printf '\n$'
+    printf ' %s' "$@"
+    printf '\n'
+    timeout -k 2s 10s "$@" 2>&1
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        printf '[unavailable or failed: exit %s; continuing]\n' "$status"
+        failures=$((failures + 1))
+    fi
+}
+
+echo 'SWITCHBSD: DIAGNOSTIC_REPORT_BEGIN'
+echo 'Read-only snapshot. Command timeout: 10 s, kill grace: 2 s.'
+echo 'Build hashes identify packaged files; the SD card is not read back.'
+echo 'The system clock may be unset.'
+
+printf '\n=== Build and system ===\n'
+run cat /etc/switchbsd-build.json
+run date -u
+run uname -a
+run sysctl hw.machine hw.model hw.physmem hw.ncpu kern.smp.active kern.boottime kern.console
+
+printf '\n=== USB devices and drivers ===\n'
+run usbconfig list
+run usbconfig show_ifdrv
+run usbconfig dump_device_desc
+run devinfo -rv
+
+printf '\n=== Storage and mounts ===\n'
+run sysctl kern.disks
+run camcontrol devlist -v
+run geom disk list
+run diskinfo -v /dev/md0
+run mount
+run df -h
+
+printf '\n=== Network, processes and boot settings ===\n'
+run ifconfig -a
+run ps ax
+run kenv
+
+printf '\n=== Kernel messages ===\n'
+run dmesg
+printf '\nCommands unavailable or failed: %s\n' "$failures"
+echo 'SWITCHBSD: DIAGNOSTIC_REPORT_END'

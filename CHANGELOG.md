@@ -3,7 +3,21 @@
 Builds are numbered by firmware revision. All dates are 2026-10-03; details
 and validation records are in [STATUS.md](STATUS.md).
 
-## Build 8 — USB keyboard for the FreeBSD shell (unreleased, untested on hardware)
+## Diagnostic image revision 1 — build 8 firmware retained
+
+- Static ARM64 `usbconfig`, `devinfo`, `diskinfo`, `sha256` and `timeout` tools.
+- Rescue applets for device/storage inspection, file management and paging.
+- `switchbsd-report` collects build identity, USB/devices, storage, settings
+  and kernel logs with per-command timeouts and failure reporting.
+- Build identity embedded in the RAM root; RAM-root-only diagnostic update ZIP
+  and usage guide, also included in the full image.
+- QEMU smoke coverage for diagnostic tools, report completion and SHA-256.
+- Fixed the Clang unused-function error in the I2C test harness.
+
+## Build 8 — USB keyboard for the FreeBSD shell (user-confirmed on hardware)
+
+The user reports that the keyboard works. The local working distribution is
+preserved in `build/hardware-keyboard-2026-10-03/` before the diagnostic update.
 
 ### Added
 - Firmware USB-C host setup in the boot manager (`config/switchbsd-usb-host.c`).

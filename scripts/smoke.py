@@ -8,6 +8,20 @@ import sys
 import time
 from build import ROOT, BUILD, DIST, make_disk, require, assemble_os
 
+CHECKS = (
+    ("SHELL_INTERACTIVE", "uname -a"),
+    ("USB_TOOLS_OK", "usbconfig list && usbconfig show_ifdrv && usbconfig dump_device_desc"),
+    ("STORAGE_TOOLS_OK", "devinfo -rv > /tmp/devinfo.txt && diskinfo -v /dev/md0 && "
+                         "geom disk list && camcontrol devlist -v"),
+    ("CHECKSUM_OK", '[ "$(printf abc | sha256 -q)" = '
+                    'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad ]'),
+    ("PAGER_OK", "printf 'pager check\\n' > /tmp/pager.txt && less -F -X /tmp/pager.txt"),
+    ("TIMEOUT_OK", 'timeout -k 1s 1s sleep 5; [ "$?" -eq 124 ]'),
+    ("DIAGNOSTICS_OK", 'switchbsd-report > /tmp/report.txt && cat /tmp/report.txt && '
+                       '[ "$(tail -n 2 /tmp/report.txt | head -n 1)" = '
+                       '"Commands unavailable or failed: 0" ] && sha256 /tmp/report.txt'),
+)
+
 
 def main():
     require(["qemu-system-aarch64"])
@@ -22,7 +36,8 @@ def main():
     shutil.copytree(BUILD / "sd", sd)
     config = sd / "boot/loader.conf"
     config.write_text("\n".join(line for line in config.read_text().splitlines()
-                                 if not line.startswith("hw.uart.console=")) + '\nautoboot_delay="1"\n')
+                                 if not line.startswith(("hw.uart.console=", "boot_serial="))) +
+                      '\nautoboot_delay="1"\nboot_serial="YES"\n')
     disk = BUILD / "qemu.img"
     make_disk(sd, disk)
     log = ROOT / "logs/qemu-uart.log"
@@ -30,26 +45,44 @@ def main():
            "-m", "2048", "-smp", "1", "-accel", "tcg", "-bios", str(firmware),
            "-drive", f"if=none,file={disk},format=raw,id=sd,snapshot=on",
            "-device", "virtio-blk-device,drive=sd", "-device", "virtio-rng-device",
+           "-device", "qemu-xhci", "-device", "usb-kbd",
            "-nographic", "-monitor", "none", "-nic", "none"]
     with log.open("wb") as out:
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=out, stderr=subprocess.STDOUT)
         try:
             deadline = time.monotonic() + int(os.environ.get("QEMU_TIMEOUT", "300"))
+            step = 0
             sent = False
             while time.monotonic() < deadline and proc.poll() is None:
                 content = log.read_bytes()
                 if b"Diagnostic shell on /dev/console" in content and not sent:
                     # Give init's shell time to enter the terminal read loop.
                     time.sleep(2)
-                    proc.stdin.write(b"uname -a && echo SWITCHBSD: SHELL_INTERACTIVE\n")
-                    proc.stdin.flush()
+                    marker, command = CHECKS[step]
+                    print(f"QEMU: checking {marker}", flush=True)
+                    # A leading newline separates markers from pager terminal
+                    # escape sequences and command output without a final LF.
+                    line = (command + f" && printf '\\nSWITCHBSD: {marker}\\n' || "
+                            f"printf '\\nSWITCHBSD: CHECK_FAILED_{marker}\\n'\n").encode()
+                    # Pace input so long commands do not overrun the UART FIFO.
+                    for offset in range(0, len(line), 16):
+                        proc.stdin.write(line[offset:offset + 16])
+                        proc.stdin.flush()
+                        time.sleep(0.02)
                     sent = True
-                if (sent and b"SWITCHBSD: USERLAND_READY" in content and
-                        b"\r\nSWITCHBSD: SHELL_INTERACTIVE\r\n" in content):
-                    print(f"QEMU: userland and interactive serial shell passed. Transcript: {log}")
-                    return
+                marker = CHECKS[step][0]
+                if f"\r\nSWITCHBSD: CHECK_FAILED_{marker}\r\n".encode() in content:
+                    raise RuntimeError(f"QEMU check failed: {marker}; inspect {log}")
+                if sent and f"\r\nSWITCHBSD: {marker}\r\n".encode() in content:
+                    step += 1
+                    if step == len(CHECKS):
+                        if b"\r\nSWITCHBSD: DIAGNOSTIC_REPORT_END\r\n" not in content:
+                            raise RuntimeError(f"QEMU report is incomplete; inspect {log}")
+                        print(f"QEMU: userland, diagnostic tools/report and interactive serial shell passed. Transcript: {log}")
+                        return
+                    sent = False
                 time.sleep(1)
-            raise RuntimeError(f"QEMU did not reach the interactive shell; inspect {log}")
+            raise RuntimeError(f"QEMU did not complete {CHECKS[step][0]}; inspect {log}")
         finally:
             if proc.poll() is None:
                 proc.terminate()

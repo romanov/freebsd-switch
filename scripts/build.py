@@ -17,6 +17,26 @@ JOBS = os.environ.get("JOBS", "8")
 USB_UPDATE_FILES = ("switchbsd/coreboot.rom", "bootloader/payloads/hekate-switchbsd.bin",
                     "boot/kernel/kernel", "boot/rootfs.ufs", "switchbsd/USB-UPDATE.md",
                     "switchbsd/BUILD-TIME.txt")
+DIAGNOSTIC_UPDATE_FILES = ("boot/rootfs.ufs", "switchbsd/docs/diagnostics.md",
+                           "switchbsd/BUILD-TIME.txt")
+RESCUE_TOOLS = (
+    "sh", "mount", "umount", "hostname", "sysctl", "ls", "cat", "dmesg", "kenv",
+    "reboot", "halt", "sleep", "ps", "df", "stty", "ifconfig", "date", "camcontrol",
+    "geom", "gpart", "mount_msdosfs", "cp", "mkdir", "rm", "mv", "chmod", "ln",
+    "sync", "head", "tail", "sed", "tee", "less", "vi", "test",
+)
+# Small static tools built from the pinned source against the staged ARM64 world.
+# Library dependencies follow the corresponding FreeBSD Makefiles.
+DIAGNOSTIC_TOOLS = {
+    "uname": (("usr.bin/uname/uname.c",), ()),
+    "usbconfig": (("usr.sbin/usbconfig/usbconfig.c", "usr.sbin/usbconfig/dump.c"),
+                  ("-lusb", "-lpthread")),
+    "devinfo": (("usr.sbin/devinfo/devinfo.c",), ("-ldevinfo",)),
+    "diskinfo": (("usr.sbin/diskinfo/diskinfo.c",), ("-lutil",)),
+    # As in rescue, omit the optional Casper service dependency.
+    "sha256": (("sbin/md5/md5.c",), ("-lmd",)),
+    "timeout": (("bin/timeout/timeout.c",), ()),
+}
 
 
 def run(args, *, cwd=ROOT, env=None, log=None):
@@ -124,7 +144,9 @@ def copy(source, target):
     shutil.copyfile(source, target)
 
 
-def assemble_os():
+def assemble_os(build_time=None):
+    if build_time is None:
+        build_time = datetime.now(timezone.utc).isoformat()
     world = BUILD / "world"
     needed = [world / "boot/loader.efi", world / "boot/kernel/kernel",
               world / "rescue/rescue", world / "sbin/init"]
@@ -137,22 +159,38 @@ def assemble_os():
         if p.exists():
             shutil.rmtree(p)
         p.mkdir()
-    for d in ["rescue", "bin", "sbin", "etc", "dev", "tmp", "var/run", "root"]:
+    for d in ["rescue", "bin", "sbin", "etc", "dev", "tmp", "var/run", "root", "mnt"]:
         (root / d).mkdir(parents=True, exist_ok=True)
     copy(world / "rescue/rescue", root / "rescue/rescue")
     (root / "rescue/rescue").chmod(0o555)
     # Verify the staged rescue links before creating aliases to the multicall binary.
-    for name in ["sh", "mount", "umount", "hostname", "sysctl", "ls", "cat",
-                 "dmesg", "kenv", "reboot", "halt", "sleep", "ps", "df", "stty", "ifconfig"]:
+    for name in RESCUE_TOOLS:
         if not (world / "rescue" / name).is_file():
             raise RuntimeError("Missing rescue applet in staged world: " + name)
         os.link(root / "rescue/rescue", root / "rescue" / name)
-    # uname is not a FreeBSD rescue applet. Build it against the staged ARM64
-    # libc so the RAM root stays independent of the dynamic linker.
-    run(["clang", "--target=aarch64-unknown-freebsd15.1", f"--sysroot={world}",
-         "-fuse-ld=lld", "-static", "-O2", "-o", root / "rescue/uname",
-         SRC / "freebsd/usr.bin/uname/uname.c"], log="uname.log")
-    (root / "bin/sh").symlink_to("../rescue/sh")
+    # These commands are not rescue applets. Static linking preserves the
+    # recovery shell's independence from a dynamic linker and shared libraries.
+    for name, (sources, libraries) in DIAGNOSTIC_TOOLS.items():
+        run(["clang", "--target=aarch64-unknown-freebsd15.1", f"--sysroot={world}",
+             "-fuse-ld=lld", "-static", "-O2", "-Wl,-s", "-o", root / "rescue" / name,
+             *(SRC / "freebsd" / p for p in sources), *libraries], log=f"{name}.log")
+        (root / "rescue" / name).chmod(0o555)
+    # mount(8) searches /sbin and /rescue for filesystem helpers. /bin aliases
+    # also keep scripts with conventional absolute command paths usable.
+    for name in (*RESCUE_TOOLS, *DIAGNOSTIC_TOOLS):
+        (root / "bin" / name).symlink_to("../rescue/" + name)
+    copy(ROOT / "config/switchbsd-report", root / "bin/switchbsd-report")
+    (root / "bin/switchbsd-report").chmod(0o555)
+    copy(ROOT / "docs/diagnostics.md", root / "root/DIAGNOSTICS.txt")
+    identity = {"diagnostic_revision": 1, "built_at": build_time, "release": "15.1",
+                "kernel_sha256": digest(world / "boot/kernel/kernel"),
+                "source_lock_sha256": digest(ROOT / "sources.lock.json"),
+                "report_sha256": digest(ROOT / "config/switchbsd-report"),
+                "builder_sha256": digest(ROOT / "scripts/build.py")}
+    firmware = BUILD / "firmware/coreboot.rom"
+    if firmware.is_file():
+        identity["firmware_sha256"] = digest(firmware)
+    (root / "etc/switchbsd-build.json").write_text(json.dumps(identity, indent=2) + "\n")
     copy(world / "sbin/init", root / "sbin/init")
     (root / "sbin/init").chmod(0o555)
     copy(ROOT / "config/rc", root / "etc/rc")
@@ -177,8 +215,8 @@ def image():
     for name in ("coreboot.rom", "hekate-switchbsd.bin"):
         if not (BUILD / "firmware" / name).is_file():
             raise RuntimeError("Missing firmware: " + name + "; run make firmware")
-    sd = assemble_os()
     build_time = datetime.now(timezone.utc).isoformat()
+    sd = assemble_os(build_time)
     build_time_file = sd / "switchbsd/BUILD-TIME.txt"
     build_time_file.parent.mkdir(parents=True, exist_ok=True)
     build_time_file.write_text(f"SwitchBSD build time (UTC): {build_time}\n")
@@ -189,7 +227,8 @@ def image():
         "[FreeBSD 15.1 experiment]\npayload=bootloader/payloads/hekate-switchbsd.bin\n")
     copy(ROOT / "sources.lock.json", sd / "switchbsd/sources.lock.json")
     for name in ("README.md", "UPDATE.md", "CONSOLE-UPDATE.md", "USB-UPDATE.md", "docs/boot-test.md",
-                 "docs/firmware.md", "docs/licenses.md", "docs/hardware-boot-2026-10-03.md"):
+                 "docs/firmware.md", "docs/licenses.md", "docs/hardware-boot-2026-10-03.md",
+                 "docs/diagnostics.md"):
         copy(ROOT / name, sd / "switchbsd" / name)
     for name in ("switch/LICENSE", "hekate/LICENSE", "coreboot/COPYING",
                  "coreboot/3rdparty/arm-trusted-firmware/license.rst",
@@ -203,6 +242,7 @@ def image():
     make_disk(sd, DIST / "freebsd-switch-15.1.img")
     metadata = {"target": "Erista", "release": "15.1", "hardware_verified": False,
                 "built_at": build_time,
+                "diagnostics": json.loads((BUILD / "root/etc/switchbsd-build.json").read_text()),
                 "sources": json.loads((ROOT / "sources.lock.json").read_text()),
                 "host": subprocess.check_output(["uname", "-a"], text=True).strip(),
                 "toolchains": {}, "inputs": {}, "artifacts": {}}
@@ -240,6 +280,10 @@ def image():
     # The USB keyboard needs the new firmware, kernel driver and RAM-root rc.
     with zipfile.ZipFile(DIST / "freebsd-switch-15.1-usb-update.zip", "w", zipfile.ZIP_DEFLATED) as z:
         for name in USB_UPDATE_FILES:
+            z.write(sd / name, name)
+        z.comment = f"SwitchBSD build time (UTC): {build_time}".encode()
+    with zipfile.ZipFile(DIST / "freebsd-switch-15.1-diagnostics-update.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        for name in DIAGNOSTIC_UPDATE_FILES:
             z.write(sd / name, name)
         z.comment = f"SwitchBSD build time (UTC): {build_time}".encode()
     checksums()
