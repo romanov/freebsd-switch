@@ -35,6 +35,13 @@ and a small FreeBSD driver takes the controller over. Keyboard input is now
 user-confirmed on hardware; `switchbsd/usb-host-disable` on the SD card returns
 to build 7 behaviour.
 
+The [Wi-Fi and SSH update](NETWORK-UPDATE.md) adds a TP-Link TL-WN821N v5/v6
+USB Wi-Fi adapter (RTL8192EU, FreeBSD `rtwn`) on the same USB-C port, DHCP and
+an SSH server with key or password login. The network name, Wi-Fi password and
+SSH login go in `boot/loader.conf.d/network.conf` on the SD card, which the
+FreeBSD loader passes to the system. It keeps the build 8 firmware. Wi-Fi is
+not yet tested on hardware; QEMU tests DHCP and SSH on a virtual network card.
+
 The [diagnostic RAM-root update](docs/diagnostics.md) adds `usbconfig`, `devinfo`,
 `diskinfo`, `sha256`, file/paging tools and `switchbsd-report`. At the shell,
 run `switchbsd-report > /tmp/report.txt`, then `less /tmp/report.txt`. Reports
@@ -87,6 +94,13 @@ files remain in `cache/originals/`. A second build reuses existing objects.
 - `dist/freebsd-switch-15.1-console-update.zip`: small screen-console configuration update.
 - `dist/freebsd-switch-15.1-usb-update.zip`: build 8 firmware, kernel and RAM root for the USB keyboard.
 - `dist/freebsd-switch-15.1-diagnostics-update.zip`: diagnostic RAM root and guide for an existing build 8 installation.
+- `dist/freebsd-switch-15.1-network-update.zip`: Wi-Fi/SSH kernel, RAM root, boot entropy,
+  settings template and guide for an existing build 8 installation.
+- Every SD bundle includes `boot/loader.conf.d/network.conf.sample`, never a real
+  `network.conf`, so updates keep the user's network settings.
+- `build/ssh/ssh_host_ed25519_key`: the Switch's SSH host key. It is created on the
+  first build and reused, so the fingerprint stays stable. Its private key is in
+  every RAM root built from it; delete `build/ssh` to replace it.
 - Every ZIP contains `switchbsd/BUILD-TIME.txt` and carries the same UTC build
   time in its archive comment.
 - `dist/freebsd-switch-15.1.img`: standalone MBR/FAT32 disk image.
@@ -120,13 +134,19 @@ Diagnostic shell on /dev/console; type exit to restart it.
 
 `make smoke` boots a copy using QEMU's own UEFI and PL011 serial device, supplies
 entropy and a virtual USB keyboard, and checks the shell, diagnostic tools,
-report collection and a known SHA-256 result.
+report collection and a known SHA-256 result. It also adds a virtual network
+card and a throwaway `network.conf` with Windows line endings, then checks DHCP,
+removal of the passwords from the kernel environment, and SSH key login,
+password login and `scp` from the host against the build's host key.
 Set `QEMU_EFI` to override `/usr/local/share/qemu/edk2-aarch64-code.fd`, and
 `QEMU_TIMEOUT` to override the 300-second timeout. QEMU does not test the Switch
-firmware, Tegra drivers, physical UART wiring or the Hekate/Coreboot handoff.
+firmware, Tegra drivers, USB Wi-Fi, physical UART wiring or the Hekate/Coreboot
+handoff.
 
 The root filesystem is volatile. There is no persistent storage setup,
-network configuration, Joy-Con input, audio, graphics acceleration or suspend.
+Joy-Con input, audio, graphics acceleration or suspend. Networking is limited
+to USB adapters on the USB-C port; the Switch's built-in Wi-Fi (Broadcom on
+PCIe) is not supported.
 Secondary CPU startup is disabled. The diagnostic kernel retains GENERIC
 hardware support; it is not a size-optimized Switch-only kernel.
 

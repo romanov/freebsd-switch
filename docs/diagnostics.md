@@ -1,6 +1,11 @@
-# Diagnostic image, revision 1
+# Diagnostic image
 
-This RAM-root update adds USB, device and storage inspection, SHA-256 checksums,
+Revision 2 of the image adds Wi-Fi, DHCP and SSH, together with a new kernel;
+see [the Wi-Fi and SSH update](../NETWORK-UPDATE.md), which is also on the
+Switch as `/root/NETWORK.txt`. The report then also includes
+`switchbsd-net status`, which never prints passwords.
+
+Revision 1 adds USB, device and storage inspection, SHA-256 checksums,
 file tools and a single report command. It uses the existing build 8 firmware
 and kernel. Keyboard input on build 8 has been confirmed by the user; this
 new diagnostic image requires its own hardware check.
@@ -43,7 +48,9 @@ deadline. `DIAGNOSTIC_REPORT_END` means collection finished, not that every
 device passed a test. The summary counts unsuccessful probes; the command
 returns success for a completed report even if some probes failed.
 
-Reports in `/tmp` are lost on reboot. To keep one, copy it to an already mounted
+Reports in `/tmp` are lost on reboot. With the Wi-Fi and SSH update, copy one
+to your computer with `scp root@<switch address>:/tmp/report.txt .`. Otherwise,
+copy it to an already mounted
 writable filesystem (for example `cp /tmp/report.txt /mnt/report.txt`) and run
 `sync`. No persistent filesystem is mounted automatically. Boot settings and
 device descriptors may contain identifying details; review before sharing.
@@ -60,6 +67,7 @@ sysctl kern.disks              # detected disk names
 diskinfo -v /dev/md0            # RAM-root disk details
 sha256 /tmp/report.txt         # checksum a saved report
 dmesg | less                   # kernel messages
+switchbsd-net status           # Wi-Fi, addresses and SSH (revision 2)
 ```
 
 `diskinfo -v /dev/da0` can inspect a USB disk if that device actually appears.
@@ -69,9 +77,11 @@ that it works.
 
 The image also provides `cp`, `mkdir`, `rm`, `mv`, `chmod`, `ln`, `sync`, `date`,
 `head`, `tail`, `sed`, `tee`, `less`, `vi`, `gpart` and `mount_msdosfs`, alongside
-the existing rescue commands. All binaries are static AArch64 executables or
-rescue applets; no shared-library runtime is needed. The root image remains
-128 MiB and the shell still runs as root.
+the existing rescue commands. These are static AArch64 executables or rescue
+applets, so the shell needs no shared-library runtime. From revision 2, the
+network programs (`sshd`, `wpa_supplicant` and helpers) are dynamically linked
+and bring their own libraries. The root image remains 128 MiB and the shell
+still runs as root.
 
 ## Acceptance
 

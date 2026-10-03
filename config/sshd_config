@@ -1,0 +1,14 @@
+# SwitchBSD RAM root. Root logs in with a key from switchbsd.ssh.key or the
+# password from switchbsd.ssh.password; root has no password otherwise.
+# There is no PAM configuration or syslogd in the RAM root.
+HostKey /etc/ssh/ssh_host_ed25519_key
+PermitRootLogin yes
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication yes
+PermitEmptyPasswords no
+KbdInteractiveAuthentication no
+UsePAM no
+UseDNS no
+PrintMotd no
+Subsystem sftp /usr/libexec/sftp-server

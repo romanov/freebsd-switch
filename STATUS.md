@@ -266,3 +266,55 @@ The diagnostic update still needs a Switch hardware check. Next: back up the
 card's `boot/rootfs.ufs`, extract the diagnostic update, boot and collect a
 report. Confirm that it identifies the keyboard and Tegra controller, and
 that the pager returns to the shell. Existing OTG power behavior is unchanged.
+
+## Wi-Fi and SSH update (diagnostic image revision 2) — 2026-10-03
+
+Goal: network access and SSH logins using the user's TP-Link TL-WN821N v5/v6
+(RTL8192EU, USB ID 2357:0107) on the USB-C port. The Switch's built-in Wi-Fi
+(Broadcom BCM4356 on Tegra PCIe) is out of scope. Its firmware never brings up
+PCIe, and FreeBSD 15.1's `brcmfmac` is unfinished and not built by default.
+
+What changed:
+- Kernel: `wlan`, its WEP/CCMP/TKIP/AMRR modules, `rtwn`, `rtwn_usb` and
+  `rtwnfw` are built into SWITCHDIAG. Modules stay disabled.
+- RAM root:
+  - `sshd`, `sshd-session`, `sshd-auth`, `sftp-server`, `wpa_supplicant`,
+    `wpa_cli`, `pw`, `pwd_mkdb`, `arp` and `chown` are copied from the staged
+    world, with `ld-elf.so.1` and their `DT_NEEDED` library closure. Recovery
+    tools stay static.
+  - The `route`, `ping`, `dhclient`, `pkill` and `pgrep` rescue applets are
+    added, with `/sbin` aliases.
+  - Password database for `root`, `sshd`, `_dhcp` and `nobody`.
+  - dhclient hooks.
+  - Every file is owned by root:wheel through an mtree spec passed to `makefs -F`.
+- `switchbsd-net` (`config/switchbsd-net`):
+  - reads `switchbsd.*` loader variables from `boot/loader.conf.d/network.conf`
+    once per boot;
+  - writes `wpa_supplicant.conf` and `authorized_keys`, and sets the root
+    password with `pw`;
+  - removes the Wi-Fi and SSH passwords from kenv;
+  - joins Wi-Fi, runs DHCP on Wi-Fi and wired interfaces, starts sshd, and
+    prints the address and host-key fingerprint.
+
+  `/etc/rc` runs it under `timeout --foreground`, so the shell always starts.
+- SSH host key: generated once in `build/ssh/` and reused across rebuilds. Its
+  fingerprint is recorded in the build identity and printed by `make image`.
+- `boot/entropy` (4096 random bytes per build) seeds random(4) through the
+  loader.
+- New `dist/freebsd-switch-15.1-network-update.zip`. No ZIP ever contains a
+  real `boot/loader.conf.d/*.conf`; validation enforces this.
+- License notices for the Realtek firmware, wpa_supplicant and OpenSSH are in
+  `switchbsd/licenses/`.
+
+Validation so far (Windows checkout, no FreeBSD build here):
+- Host tests: the new `tests/test_network.py` (7 tests) and the extended
+  `tests/test_artifacts.py` pass. They cover ELF dependency reading, library
+  closure, the ownership spec and the SSH fingerprint against `ssh-keygen`. The
+  shell tests ran under msys `dash`, standing in for FreeBSD `/bin/sh`.
+- **Pending on the FreeBSD 15.1 build host:** `make freebsd image validate test
+  smoke`. The kernel configuration changed, so `make freebsd` must run first.
+  The smoke test now checks DHCP on a virtual network card, the CRLF settings
+  file, secret removal, wlan/wpa tools, and SSH key login, password login and
+  `scp` from the host.
+- **Pending on hardware:** `rtwn0` attach, association, DHCP and an SSH login
+  from a computer. See `NETWORK-UPDATE.md`.

@@ -3,6 +3,47 @@
 Builds are numbered by firmware revision. All dates are 2026-10-03; details
 and validation records are in [STATUS.md](STATUS.md).
 
+## Diagnostic image revision 2 — Wi-Fi and SSH (build 8 firmware retained)
+
+Not yet tested on Switch hardware. The FreeBSD build, validation and QEMU
+smoke run are pending on the build host.
+
+### Added
+- USB Wi-Fi for the TP-Link TL-WN821N v5/v6 (RTL8192EU): the 802.11 stack,
+  WEP/CCMP/TKIP, `rtwn`, `rtwn_usb` and the Realtek firmware are built into
+  SWITCHDIAG.
+- `switchbsd-net start|stop|restart|status|scan` (`config/switchbsd-net`):
+  - Settings come from `boot/loader.conf.d/network.conf` through the loader:
+    `switchbsd.wifi.ssid`, `.psk`, `.country`, `switchbsd.ssh.key*` and
+    `switchbsd.ssh.password`.
+  - It joins Wi-Fi with `wpa_supplicant`, runs DHCP on Wi-Fi and wired
+    interfaces, and starts sshd.
+  - Passwords are removed from the kernel environment once applied, and every
+    wait has a time limit.
+- OpenSSH `sshd` with `sftp-server`, `wpa_supplicant`/`wpa_cli`, and `pw`,
+  `pwd_mkdb`, `arp` and `chown`, copied with the run-time linker and their
+  shared libraries. Rescue `route`, `ping`, `dhclient`, `pkill` and `pgrep`,
+  with `/sbin` aliases.
+- SSH host key generated once on the build host (`build/ssh/`), with its
+  fingerprint shown at boot and recorded in the build identity.
+- `boot/entropy`, a new random seed with every build.
+- `dist/freebsd-switch-15.1-network-update.zip`, `NETWORK-UPDATE.md` and
+  `boot/loader.conf.d/network.conf.sample`.
+- `switchbsd-report` includes `switchbsd-net status`.
+- Tests:
+  - `tests/test_network.py` for the settings handling, secret removal, time
+    limits and status output;
+  - ELF dependency, library closure, ownership spec and SSH fingerprint tests;
+  - QEMU smoke checks for DHCP, a CRLF settings file, secret removal, and SSH
+    key/password login and `scp` against the build's host key.
+
+### Changed
+- RAM-root files are owned by root:wheel. `makefs` gets an mtree spec instead
+  of recording the build user's IDs.
+- `/etc/rc` shows the USB Wi-Fi adapter and starts networking before the
+  shell, under a 150 s backstop. The banner reads "diagnostic image revision 2".
+- `make doctor` also requires `ssh`, `scp`, `ssh-keygen` and `pwd_mkdb`.
+
 ## Diagnostic image revision 1 — build 8 firmware retained
 
 - Static ARM64 `usbconfig`, `devinfo`, `diskinfo`, `sha256` and `timeout` tools.

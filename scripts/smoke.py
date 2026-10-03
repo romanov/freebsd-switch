@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 """Boot a copy of the OS image with QEMU's own UART/UEFI; retain UART transcript."""
+import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 import time
-from build import ROOT, BUILD, DIST, make_disk, require, assemble_os
+from build import ROOT, BUILD, DIST, make_disk, require, assemble_os, host_key
+
+# Throwaway smoke-test settings. The Wi-Fi network does not exist: QEMU has no
+# USB Wi-Fi, so this exercises the missing-adapter path and secret removal.
+SMOKE_PASSWORD = "smoke test password"
+SMOKE_SSID = "SwitchBSD-smoke"
+SMOKE_PSK = "smoke-test-psk"
 
 CHECKS = (
     ("SHELL_INTERACTIVE", "uname -a"),
@@ -17,14 +26,77 @@ CHECKS = (
                     'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad ]'),
     ("PAGER_OK", "printf 'pager check\\n' > /tmp/pager.txt && less -F -X /tmp/pager.txt"),
     ("TIMEOUT_OK", 'timeout -k 1s 1s sleep 5; [ "$?" -eq 124 ]'),
+    ("NETWORK_OK", "switchbsd-net status && "
+                   """[ -n "$(ifconfig vtnet0 inet | sed -n '/inet 10[.]0[.]2[.]/p')" ]"""),
+    # The SSID proves the CRLF settings file reached the kernel environment.
+    ("SECRETS_SCRUBBED", f'[ "$(kenv -q switchbsd.wifi.ssid)" = {SMOKE_SSID} ] && '
+                         "[ -z \"$(kenv | sed -n -e '/^switchbsd[.]wifi[.]psk=/p' "
+                         "-e '/^switchbsd[.]ssh[.]password=/p')\" ] && "
+                         """[ "$(ls -l /etc/wpa_supplicant.conf | sed 's/ .*//')" = -rw------- ] && """
+                         """[ -n "$(switchbsd-net status | sed -n '/^SSH root password: set$/p')" ]"""),
+    ("WIFI_TOOLS_OK", "sysctl net.wlan.devices && wpa_supplicant -v && wpa_cli -v"),
     ("DIAGNOSTICS_OK", 'switchbsd-report > /tmp/report.txt && cat /tmp/report.txt && '
                        '[ "$(tail -n 2 /tmp/report.txt | head -n 1)" = '
                        '"Commands unavailable or failed: 0" ] && sha256 /tmp/report.txt'),
 )
+# Boot-time output from switchbsd-net start, before the shell.
+BOOT_MARKERS = (b"Wi-Fi: no USB adapter found", b"SWITCHBSD: SSH_READY",
+                b"SWITCHBSD: NETWORK_READY vtnet0 10.0.2.15")
+
+
+def free_port():
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def ssh_checks(port, directory):
+    """Log in from the host with the key and the password, then copy a file."""
+    key = directory / "id_ed25519"
+    known_hosts = directory / "known_hosts"
+    # Strict checking against the build-host key proves the image uses it.
+    host_public = " ".join(host_key().with_suffix(".pub").read_text().split()[:2])
+    known_hosts.write_text(f"[127.0.0.1]:{port} {host_public}\n")
+    common = ["-F", "/dev/null", "-o", "StrictHostKeyChecking=yes",
+              "-o", f"UserKnownHostsFile={known_hosts}", "-o", "GlobalKnownHostsFile=/dev/null",
+              "-o", "ConnectTimeout=20", "-o", "LogLevel=ERROR"]
+    with_key = common + ["-i", str(key), "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes",
+                         "-o", "PasswordAuthentication=no"]
+    askpass = directory / "askpass"
+    askpass.write_text(f"#!/bin/sh\necho '{SMOKE_PASSWORD}'\n")
+    askpass.chmod(0o700)
+    password_env = dict(os.environ, SSH_ASKPASS=str(askpass), SSH_ASKPASS_REQUIRE="force",
+                        DISPLAY=os.environ.get("DISPLAY", ":0"))
+    with_password = common + ["-o", "PubkeyAuthentication=no",
+                              "-o", "PreferredAuthentications=password",
+                              "-o", "NumberOfPasswordPrompts=1"]
+    attempts = (
+        ("SSH key login", ["ssh", *with_key, "-p", str(port), "root@127.0.0.1",
+                           "uname -a && echo SSH_KEY_OK"], None, "SSH_KEY_OK"),
+        ("SSH password login", ["ssh", *with_password, "-p", str(port), "root@127.0.0.1",
+                                "echo SSH_PASSWORD_OK"], password_env, "SSH_PASSWORD_OK"),
+        # scp uses the SFTP subsystem by default.
+        ("scp download", ["scp", *with_key, "-P", str(port), "root@127.0.0.1:/etc/switchbsd-build.json",
+                          str(directory / "identity.json")], None, None),
+    )
+    for name, command, env, expected in attempts:
+        for attempt in range(3):
+            result = subprocess.run(command, env=env, stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True, timeout=60)
+            if result.returncode == 0 and (expected is None or expected in result.stdout):
+                print(f"QEMU: {name} passed", flush=True)
+                break
+            time.sleep(3)
+        else:
+            raise RuntimeError(f"QEMU {name} failed: {result.stdout}{result.stderr}")
+    identity = json.loads((directory / "identity.json").read_text())
+    if identity["ssh_host_key_fingerprint"] != json.loads(
+            (BUILD / "root/etc/switchbsd-build.json").read_text())["ssh_host_key_fingerprint"]:
+        raise RuntimeError("Downloaded build identity does not match this build")
 
 
 def main():
-    require(["qemu-system-aarch64"])
+    require(["qemu-system-aarch64", "ssh", "scp", "ssh-keygen"])
     firmware = Path(os.environ.get("QEMU_EFI", "/usr/local/share/qemu/edk2-aarch64-code.fd"))
     if not firmware.is_file():
         raise RuntimeError("Set QEMU_EFI to a QEMU AArch64 UEFI firmware image")
@@ -38,15 +110,34 @@ def main():
     config.write_text("\n".join(line for line in config.read_text().splitlines()
                                  if not line.startswith(("hw.uart.console=", "boot_serial="))) +
                       '\nautoboot_delay="1"\nboot_serial="YES"\n')
-    disk = BUILD / "qemu.img"
-    make_disk(sd, disk)
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "smoke",
+                        "-f", directory / "id_ed25519"], check=True)
+        public_key = (directory / "id_ed25519.pub").read_text().strip()
+        # CRLF line endings, as Windows Notepad saves them.
+        (sd / "boot/loader.conf.d/network.conf").write_bytes("".join(f"{line}\r\n" for line in (
+            "# SwitchBSD smoke test",
+            f'switchbsd.wifi.ssid="{SMOKE_SSID}"',
+            f'switchbsd.wifi.psk="{SMOKE_PSK}"',
+            f'switchbsd.ssh.key="{public_key}"',
+            f'switchbsd.ssh.password="{SMOKE_PASSWORD}"')).encode())
+        disk = BUILD / "qemu.img"
+        make_disk(sd, disk)
+        port = free_port()
+        boot(firmware, disk, port, directory)
+
+
+def boot(firmware, disk, port, directory):
     log = ROOT / "logs/qemu-uart.log"
     cmd = ["qemu-system-aarch64", "-machine", "virt,gic-version=2", "-cpu", "cortex-a57",
            "-m", "2048", "-smp", "1", "-accel", "tcg", "-bios", str(firmware),
            "-drive", f"if=none,file={disk},format=raw,id=sd,snapshot=on",
            "-device", "virtio-blk-device,drive=sd", "-device", "virtio-rng-device",
            "-device", "qemu-xhci", "-device", "usb-kbd",
-           "-nographic", "-monitor", "none", "-nic", "none"]
+           "-netdev", f"user,id=net0,hostfwd=tcp:127.0.0.1:{port}-:22",
+           "-device", "virtio-net-device,netdev=net0",
+           "-nographic", "-monitor", "none"]
     with log.open("wb") as out:
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=out, stderr=subprocess.STDOUT)
         try:
@@ -78,7 +169,13 @@ def main():
                     if step == len(CHECKS):
                         if b"\r\nSWITCHBSD: DIAGNOSTIC_REPORT_END\r\n" not in content:
                             raise RuntimeError(f"QEMU report is incomplete; inspect {log}")
-                        print(f"QEMU: userland, diagnostic tools/report and interactive serial shell passed. Transcript: {log}")
+                        for boot_marker in BOOT_MARKERS:
+                            if boot_marker not in content:
+                                raise RuntimeError(f"QEMU boot output lacks {boot_marker.decode()}; "
+                                                   f"inspect {log}")
+                        ssh_checks(port, directory)
+                        print("QEMU: userland, diagnostic tools/report, interactive serial shell, "
+                              f"DHCP and SSH key/password/scp access passed. Transcript: {log}")
                         return
                     sent = False
                 time.sleep(1)
@@ -96,5 +193,5 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (RuntimeError, OSError) as exc:
+    except (RuntimeError, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         sys.exit(str(exc))

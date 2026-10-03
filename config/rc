@@ -1,5 +1,5 @@
 #!/bin/sh
-PATH=/rescue:/sbin:/bin
+PATH=/rescue:/sbin:/bin:/usr/sbin:/usr/bin
 TERM=${TERM:-xterm}
 export PATH TERM
 mount -uw /
@@ -13,11 +13,16 @@ sysctl hw.machine hw.model hw.physmem kern.smp.active
 sleep 3
 echo "USB controller: $(sysctl -n dev.ehci.0.%desc 2>/dev/null || echo not attached)"
 echo "USB keyboard: $(sysctl -n dev.hkbd.0.%desc 2>/dev/null || sysctl -n dev.ukbd.0.%desc 2>/dev/null || echo none)"
+echo "USB Wi-Fi: $(sysctl -n dev.rtwn.0.%desc 2>/dev/null || echo none)"
+# Every wait in switchbsd-net is bounded; the deadline is a backstop so the
+# shell always starts. --foreground leaves the daemons it starts running.
+timeout --foreground -k 5s 150s /bin/switchbsd-net start
 echo 'USB keyboard test: type  echo USB_OK  at the prompt below.'
-echo 'SwitchBSD diagnostic image revision 1'
+echo 'SwitchBSD diagnostic image revision 2'
 echo 'Diagnostics: switchbsd-report > /tmp/report.txt; less /tmp/report.txt'
-echo 'Tools: usbconfig, devinfo, diskinfo, camcontrol, geom, sha256'
-echo 'Help: less /root/DIAGNOSTICS.txt'
+echo 'Tools: usbconfig, devinfo, diskinfo, camcontrol, geom, sha256, switchbsd-net'
+echo 'Network: switchbsd-net status | scan | restart'
+echo 'Help: less /root/DIAGNOSTICS.txt; less /root/NETWORK.txt'
 echo 'RAM root is ready. Changes disappear on reboot.'
 echo 'Diagnostic shell on /dev/console; type exit to restart it.'
 while :; do

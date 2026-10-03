@@ -2,3 +2,15 @@ include GENERIC
 ident SWITCHDIAG
 # Start with the known GENERIC device set. Root is a preloaded md(4) image.
 options DDB
+
+# USB Wi-Fi: TP-Link TL-WN821N v5/v6 (RTL8192EU) and other rtwn(4) adapters.
+# Kernel modules are not built, so the 802.11 stack, ciphers, driver and
+# Realtek firmware images are all compiled in.
+device		wlan
+device		wlan_wep
+device		wlan_ccmp
+device		wlan_tkip
+device		wlan_amrr
+device		rtwn
+device		rtwn_usb
+device		rtwnfw

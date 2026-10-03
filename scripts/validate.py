@@ -8,7 +8,9 @@ import sys
 import tempfile
 import zipfile
 from build import (ROOT, SRC, BUILD, DIST, USB_UPDATE_FILES, DIAGNOSTIC_UPDATE_FILES,
-                   DIAGNOSTIC_TOOLS, RESCUE_TOOLS, digest, check_hash)
+                   NETWORK_UPDATE_FILES, DIAGNOSTIC_TOOLS, RESCUE_TOOLS, NETWORK_PROGRAMS, RTLD,
+                   digest, check_hash, elf_dynamic, library_closure, ownership_spec,
+                   ssh_fingerprint)
 
 
 def elf_aarch64(path, static=False):
@@ -97,6 +99,7 @@ def firmware():
 def sd_files(sd):
     for name in ["EFI/BOOT/BOOTAA64.EFI", "boot/kernel/kernel", "boot/rootfs.ufs",
                  "boot/loader.conf", "boot/defaults/loader.conf", "boot/lua/loader.lua",
+                 "boot/entropy", "boot/loader.conf.d/network.conf.sample",
                  "switchbsd/coreboot.rom", "bootloader/payloads/hekate-switchbsd.bin"]:
         if not (sd / name).is_file():
             raise RuntimeError("Incomplete SD bundle: " + name)
@@ -128,18 +131,55 @@ def diagnostic_root(root):
     for name in (*RESCUE_TOOLS, *DIAGNOSTIC_TOOLS):
         if not (root / "bin" / name).samefile(root / "rescue" / name):
             raise RuntimeError("Invalid diagnostic command alias: " + name)
+    for name in RESCUE_TOOLS:
+        if not (root / "sbin" / name).samefile(root / "rescue" / name):
+            raise RuntimeError("Invalid /sbin command alias: " + name)
+    for name in ("switchbsd-report", "switchbsd-net"):
+        if not (root / "bin" / name).stat().st_mode & 0o111:
+            raise RuntimeError(f"RAM-root command is not executable: {name}")
+        check_hash(root / "bin" / name, digest(ROOT / "config" / name))
     report = root / "bin/switchbsd-report"
-    if not report.stat().st_mode & 0o111:
-        raise RuntimeError("Diagnostic report command is not executable")
-    check_hash(report, digest(ROOT / "config/switchbsd-report"))
     check_hash(root / "root/DIAGNOSTICS.txt", digest(ROOT / "docs/diagnostics.md"))
+    check_hash(root / "root/NETWORK.txt", digest(ROOT / "NETWORK-UPDATE.md"))
     identity = json.loads((root / "etc/switchbsd-build.json").read_text())
     check_hash(report, identity["report_sha256"])
+    check_hash(root / "bin/switchbsd-net", identity["network_script_sha256"])
+    check_hash(root / "etc/ssh/sshd_config", identity["sshd_config_sha256"])
+    network_root(root, identity)
     check_hash(BUILD / "sd/boot/kernel/kernel", identity["kernel_sha256"])
     check_hash(BUILD / "sd/switchbsd/coreboot.rom", identity["firmware_sha256"])
     expected = "SwitchBSD build time (UTC): " + identity["built_at"]
     if (BUILD / "sd/switchbsd/BUILD-TIME.txt").read_text().strip() != expected:
         raise RuntimeError("RAM-root and SD build times do not match")
+
+
+def network_root(root, identity):
+    """Dynamic network programs, their libraries, SSH keys and root ownership."""
+    elf_aarch64(root / RTLD)
+    for name in NETWORK_PROGRAMS:
+        elf_aarch64(root / name)
+        if elf_dynamic(root / name)[0] != "/" + RTLD:
+            raise RuntimeError(f"Unexpected dynamic linker for {name}")
+        if not (root / name).stat().st_mode & 0o111:
+            raise RuntimeError(f"Network program is not executable: {name}")
+    # Resolving against the RAM root proves every needed library was copied.
+    for name in library_closure(root, NETWORK_PROGRAMS):
+        elf_aarch64(root / name)
+    key = root / "etc/ssh/ssh_host_ed25519_key"
+    if key.stat().st_mode & 0o077:
+        raise RuntimeError("SSH host key must be readable by root only")
+    expected = ssh_fingerprint(key.with_suffix(".pub").read_text()) + " (ED25519)"
+    recorded = (root / "etc/ssh/ssh_host_ed25519_key.fingerprint").read_text().strip()
+    if not expected == recorded == identity["ssh_host_key_fingerprint"]:
+        raise RuntimeError("SSH host key fingerprint does not match the build identity")
+    for name in ("etc/pwd.db", "etc/spwd.db", "etc/passwd", "sbin/dhclient-script",
+                 "etc/regdomain.xml"):
+        if not (root / name).is_file():
+            raise RuntimeError("Missing RAM-root network file: " + name)
+    if (root / "var/empty").stat().st_mode & 0o222:
+        raise RuntimeError("/var/empty must not be writable")
+    if (BUILD / "rootfs.mtree").read_text() != ownership_spec(root):
+        raise RuntimeError("RAM-root ownership spec does not cover the current tree")
 
 
 def main():
@@ -154,6 +194,8 @@ def main():
         elf_aarch64(BUILD / "root" / name, static=True)
     diagnostic_root(BUILD / "root")
     check_hash(sd / "boot/rootfs.ufs", digest(BUILD / "rootfs.ufs"))
+    if (sd / "boot/entropy").stat().st_size != 4096:
+        raise RuntimeError("Boot entropy file must be 4096 bytes")
     config = (sd / "boot/loader.conf").read_text()
     for value in ('mfsroot_type="mfs_root"', 'mfsroot_name="/boot/rootfs.ufs"',
                   'vfs.root.mountfrom="ufs:/dev/md0"',
@@ -217,6 +259,22 @@ def main():
         for name in DIAGNOSTIC_UPDATE_FILES:
             if archive.read(name) != (sd / name).read_bytes():
                 raise RuntimeError("Diagnostics update does not match SD bundle: " + name)
+    with zipfile.ZipFile(DIST / "freebsd-switch-15.1-network-update.zip") as archive:
+        if archive.testzip() is not None:
+            raise RuntimeError("Corrupt network update ZIP archive")
+        if archive_build_time(archive) != build_time:
+            raise RuntimeError("ZIP build times do not match")
+        if set(archive.namelist()) != set(NETWORK_UPDATE_FILES):
+            raise RuntimeError("Unexpected files in network update ZIP archive")
+        for name in NETWORK_UPDATE_FILES:
+            if archive.read(name) != (sd / name).read_bytes():
+                raise RuntimeError("Network update does not match SD bundle: " + name)
+    # The user's Wi-Fi and SSH settings must never be overwritten by an update.
+    for path in DIST.glob("*.zip"):
+        with zipfile.ZipFile(path) as archive:
+            if any(name.lower().startswith("boot/loader.conf.d/") and name.lower().endswith(".conf")
+                   for name in archive.namelist()):
+                raise RuntimeError(f"{path.name} would replace the user's loader.conf.d settings")
     for line in (DIST / "SHA256SUMS").read_text().splitlines():
         sha, name = line.split("  ", 1)
         check_hash(DIST / name, sha)

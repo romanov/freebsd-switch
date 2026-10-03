@@ -50,7 +50,7 @@ case "$*" in
     'sysctl hw.machine hw.model hw.physmem hw.ncpu kern.smp.active kern.boottime kern.console'|\
     'usbconfig list'|'usbconfig show_ifdrv'|'usbconfig dump_device_desc'|\
     'devinfo -rv'|'sysctl kern.disks'|'camcontrol devlist -v'|'geom disk list'|\
-    'diskinfo -v /dev/md0'|'mount'|'df -h'|'ifconfig -a'|'ps ax'|'kenv'|'dmesg')
+    'diskinfo -v /dev/md0'|'mount'|'df -h'|'ifconfig -a'|'switchbsd-net status'|    'ps ax'|'kenv'|'dmesg')
         echo "mock: $*" ;;
     *) echo "Unexpected probe: $*"; exit 99 ;;
 esac

@@ -55,6 +55,7 @@ run df -h
 
 printf '\n=== Network, processes and boot settings ===\n'
 run ifconfig -a
+run switchbsd-net status
 run ps ax
 run kenv
 

@@ -1,0 +1,316 @@
+#!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026, SwitchBSD experiment contributors
+#
+# Wi-Fi, wired DHCP and SSH for the SwitchBSD RAM root. Settings come from
+# boot/loader.conf.d/network.conf on the SD card: the loader passes them to the
+# kernel environment, because FreeBSD cannot read the SD card itself. Secrets
+# are removed from the kernel environment once they have been applied.
+# SWITCHBSD_NET_ROOT only redirects file paths for host tests.
+
+root=${SWITCHBSD_NET_ROOT:-}
+PATH=$PATH:/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+
+WLAN=wlan0
+WPA_CONF=$root/etc/wpa_supplicant.conf
+STATE=$root/var/run/switchbsd-net.state
+SSH_DIR=$root/root/.ssh
+FINGERPRINT=$root/etc/ssh/ssh_host_ed25519_key.fingerprint
+RESOLV_CONF=$root/etc/resolv.conf
+SSHD=$root/usr/sbin/sshd
+SETTINGS='boot/loader.conf.d/network.conf'
+
+usage() {
+    echo 'Usage: switchbsd-net start|stop|restart|status|scan'
+    echo 'Settings are read once per boot from the SD card file'
+    echo "$SETTINGS (see NETWORK-UPDATE.md)."
+}
+
+# Prints the value; fails without output when the variable is unset.
+setting() {
+    kenv -q "$1" 2>/dev/null
+}
+
+state() {
+    [ -f "$STATE" ] && sed -n "s/^$1=//p" "$STATE"
+}
+
+write_wpa_conf() {
+    echo 'ctrl_interface=/var/run/wpa_supplicant'
+    echo 'ctrl_interface_group=wheel'
+    echo 'network={'
+    printf '\tssid="%s"\n' "$ssid"
+    printf '\tscan_ssid=1\n'
+    if [ -n "$psk" ]; then
+        printf '\tpsk="%s"\n' "$psk"
+    else
+        printf '\tkey_mgmt=NONE\n'
+    fi
+    echo '}'
+}
+
+# Apply the loader settings once per boot; later runs reuse the files.
+configure() {
+    [ -f "$STATE" ] && return 0
+    ssid=$(setting switchbsd.wifi.ssid)
+    country=$(setting switchbsd.wifi.country)
+    # Take secrets out of the kernel environment before anything else runs.
+    if psk=$(setting switchbsd.wifi.psk); then
+        kenv -q -u switchbsd.wifi.psk
+    fi
+    if password=$(setting switchbsd.ssh.password); then
+        kenv -q -u switchbsd.ssh.password
+    fi
+
+    wifi=no
+    if [ -n "$ssid" ]; then
+        if [ "${#ssid}" -gt 32 ]; then
+            echo 'Wi-Fi: switchbsd.wifi.ssid is longer than 32 characters; Wi-Fi not configured.'
+            wifi=invalid
+        elif [ -n "$psk" ] && { [ "${#psk}" -lt 8 ] || [ "${#psk}" -gt 63 ]; }; then
+            echo 'Wi-Fi: switchbsd.wifi.psk must be 8 to 63 characters; Wi-Fi not configured.'
+            wifi=invalid
+        else
+            (umask 077 && write_wpa_conf > "$WPA_CONF")
+            wifi=yes
+        fi
+    fi
+    case $country in
+        ''|[A-Z][A-Z]) ;;
+        *)
+            echo "Wi-Fi: ignoring switchbsd.wifi.country=$country; use a two-letter code such as US or DE."
+            country= ;;
+    esac
+
+    keys=0
+    mkdir -p "$SSH_DIR" && chmod 700 "$SSH_DIR"
+    (umask 077 && : > "$SSH_DIR/authorized_keys")
+    list=$(kenv 2>/dev/null | sed -n 's/^switchbsd\.ssh\.key[0-9]*="\(.*\)"$/\1/p')
+    while IFS= read -r key; do
+        case $key in
+            '') ;;
+            ssh-*|ecdsa-*|sk-*)
+                printf '%s\n' "$key" >> "$SSH_DIR/authorized_keys"
+                keys=$((keys + 1)) ;;
+            *) echo 'SSH: ignoring a switchbsd.ssh.key value that is not an OpenSSH public key.' ;;
+        esac
+    done <<EOF
+$list
+EOF
+
+    password_set=no
+    if [ -n "$password" ]; then
+        if printf '%s\n' "$password" | pw usermod root -h 0; then
+            password_set=yes
+        else
+            echo 'SSH: could not set the root password.'
+        fi
+    fi
+    psk=
+    password=
+
+    {
+        echo "wifi=$wifi"
+        echo "country=$country"
+        echo "keys=$keys"
+        echo "password=$password_set"
+    } > "$STATE"
+}
+
+# Sets wifi_dev to the first 802.11 device, waiting for USB enumeration.
+find_wifi_device() {
+    wifi_dev=
+    waited=0
+    while :; do
+        set -- $(sysctl -n net.wlan.devices 2>/dev/null)
+        if [ $# -gt 0 ]; then
+            wifi_dev=$1
+            break
+        fi
+        [ "$waited" -ge 15 ] && break
+        [ "$waited" -eq 0 ] && printf 'Wi-Fi: waiting for the USB adapter'
+        printf '.'
+        sleep 1
+        waited=$((waited + 1))
+    done
+    [ "$waited" -gt 0 ] && echo
+    [ -n "$wifi_dev" ]
+}
+
+create_wlan() {
+    ifconfig "$WLAN" >/dev/null 2>&1 && return 0
+    if ! find_wifi_device; then
+        echo 'Wi-Fi: no USB adapter found. Check usbconfig list, then run switchbsd-net restart.'
+        return 1
+    fi
+    country=$(state country)
+    if [ -n "$country" ]; then
+        ifconfig "$WLAN" create wlandev "$wifi_dev" country "$country" >/dev/null
+    else
+        ifconfig "$WLAN" create wlandev "$wifi_dev" >/dev/null
+    fi || {
+        echo "Wi-Fi: could not create $WLAN on $wifi_dev."
+        return 1
+    }
+}
+
+associated() {
+    case $(ifconfig "$WLAN" 2>/dev/null) in
+        *'status: associated'*) return 0 ;;
+    esac
+    return 1
+}
+
+start_wifi() {
+    create_wlan || return 1
+    echo "Wi-Fi: $WLAN on $wifi_dev"
+    if ! pgrep -x wpa_supplicant >/dev/null 2>&1 &&
+       ! wpa_supplicant -B -D bsd -i "$WLAN" -c "$WPA_CONF" >/dev/null; then
+        echo 'Wi-Fi: wpa_supplicant failed to start.'
+        return 1
+    fi
+    waited=0
+    printf 'Wi-Fi: connecting'
+    until associated; do
+        if [ "$waited" -ge 30 ]; then
+            echo ' not associated.'
+            echo 'Wi-Fi: check the network name and password, or run switchbsd-net scan.'
+            return 1
+        fi
+        printf '.'
+        sleep 1
+        waited=$((waited + 1))
+    done
+    echo ' associated.'
+    dhclient "$WLAN"
+}
+
+wired_interfaces() {
+    for ifn in $(ifconfig -l 2>/dev/null); do
+        case $ifn in
+            lo*|wlan*|pflog*|pfsync*|enc*|gif*|tun*|tap*|bridge*|vlan*) ;;
+            *) echo "$ifn" ;;
+        esac
+    done
+}
+
+start_sshd() {
+    if pgrep -x sshd >/dev/null 2>&1; then
+        return 0
+    fi
+    keys=$(state keys)
+    if [ "${keys:-0}" = 0 ] && [ "$(state password)" != yes ]; then
+        echo 'SSH: not started; no SSH key or password is configured.'
+        echo "SSH: add switchbsd.ssh.key or switchbsd.ssh.password to $SETTINGS."
+        return 1
+    fi
+    if ! "$SSHD"; then
+        echo 'SSH: sshd failed to start; run /usr/sbin/sshd -d for details.'
+        return 1
+    fi
+    echo 'SWITCHBSD: SSH_READY'
+}
+
+inet_address() {
+    ifconfig "$1" inet 2>/dev/null | sed -n 's/^[[:space:]]*inet \([0-9.]*\) .*/\1/p' | head -n 1
+}
+
+fingerprint() {
+    if [ -f "$FINGERPRINT" ]; then
+        cat "$FINGERPRINT"
+    else
+        echo unknown
+    fi
+}
+
+summary() {
+    found=no
+    for ifn in $(ifconfig -l 2>/dev/null); do
+        case $ifn in lo*) continue ;; esac
+        addr=$(inet_address "$ifn")
+        [ -n "$addr" ] || continue
+        found=yes
+        echo "Network: $ifn address $addr"
+        echo "SWITCHBSD: NETWORK_READY $ifn $addr"
+        if pgrep -x sshd >/dev/null 2>&1; then
+            echo "SSH: ssh root@$addr"
+        fi
+    done
+    if [ "$found" = no ]; then
+        echo 'Network: no address yet. See switchbsd-net status; switchbsd-net restart retries.'
+    fi
+    if pgrep -x sshd >/dev/null 2>&1; then
+        echo "SSH host key: $(fingerprint)"
+    fi
+}
+
+start() {
+    configure
+    ifconfig lo0 inet 127.0.0.1 up
+    case $(state wifi) in
+        yes) start_wifi ;;
+        no) echo "Wi-Fi: not configured; see $SETTINGS." ;;
+    esac
+    for ifn in $(wired_interfaces); do
+        dhclient "$ifn"
+    done
+    start_sshd
+    summary
+    return 0
+}
+
+stop() {
+    pkill -x sshd
+    pkill -x dhclient
+    pkill -x wpa_supplicant
+    ifconfig "$WLAN" destroy 2>/dev/null
+    return 0
+}
+
+status() {
+    devices=$(sysctl -n net.wlan.devices 2>/dev/null)
+    echo "Wi-Fi adapters: ${devices:-none}"
+    echo "Wi-Fi settings: $(state wifi || echo 'not read yet')"
+    if ifconfig "$WLAN" >/dev/null 2>&1; then
+        ifconfig "$WLAN"
+        if pgrep -x wpa_supplicant >/dev/null 2>&1; then
+            wpa_cli -i "$WLAN" status
+        fi
+    fi
+    for ifn in $(ifconfig -l 2>/dev/null); do
+        case $ifn in lo*) continue ;; esac
+        echo "Address $ifn: $(inet_address "$ifn")"
+    done
+    gateway=$(route -n get default 2>/dev/null | sed -n 's/^[[:space:]]*gateway: //p')
+    echo "Default route: ${gateway:-none}"
+    dns=$( [ -f "$RESOLV_CONF" ] && sed -n 's/^nameserver //p' "$RESOLV_CONF")
+    echo "DNS servers:" ${dns:-none}
+    if pgrep -x sshd >/dev/null 2>&1; then
+        echo 'SSH server: running'
+    else
+        echo 'SSH server: not running'
+    fi
+    echo "SSH host key: $(fingerprint)"
+    echo "SSH authorized keys: $(state keys || echo 0)"
+    echo "SSH root password: $( [ "$(state password)" = yes ] && echo set || echo 'not set')"
+    return 0
+}
+
+scan() {
+    create_wlan || return 1
+    ifconfig "$WLAN" up
+    ifconfig "$WLAN" scan
+}
+
+case "$#:$1" in
+    1:start) start ;;
+    1:stop) stop ;;
+    1:restart) stop; start ;;
+    1:status) status ;;
+    1:scan) scan ;;
+    1:-h|1:--help) usage ;;
+    *) usage >&2; exit 2 ;;
+esac
