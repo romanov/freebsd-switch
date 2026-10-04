@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import pkgbase
 import usb_root
 from build import USBROOT_UPDATE_FILES
-from validate import gpt_partitions, usb_stick, FREEBSD_UFS
+from validate import gpt_partitions, has_kernel_payload, usb_stick, FREEBSD_UFS
 
 ROOT = Path(__file__).resolve().parents[1]
 UPDATE = ROOT / "config/switchbsd-update"
@@ -190,6 +190,20 @@ class StickImage(unittest.TestCase):
 
 
 class StickFiles(unittest.TestCase):
+    def test_empty_kernel_directory_is_not_a_kernel_payload(self):
+        with tempfile.TemporaryDirectory() as d:
+            boot = Path(d)
+            kernel = boot / "kernel"
+            kernel.mkdir()
+            self.assertFalse(has_kernel_payload(boot))
+            (kernel / "kernel").write_bytes(b"kernel")
+            self.assertTrue(has_kernel_payload(boot))
+
+    def test_console_gettytab_entry(self):
+        self.assertTrue(usb_root.has_root_console_autologin(usb_root.CONSOLE_GETTY_ENTRY))
+        self.assertFalse(usb_root.has_root_console_autologin(
+            usb_root.CONSOLE_GETTY_ENTRY.replace(":nc:", ":")))
+
     def test_console_autologin_and_fstab(self):
         self.assertIn(f'"/usr/libexec/getty {usb_root.CONSOLE_GETTY}"', usb_root.TTYS)
         self.assertTrue(usb_root.TTYS.splitlines()[-1].startswith("console\t"))
@@ -223,7 +237,9 @@ class UpdateScript(unittest.TestCase):
         self.conf = base / "SwitchBSD.conf"
         self.conf.write_text(pkgbase.repo_conf(pkgbase.URL_PLACEHOLDER), newline="\n")
         self.fake("pkg", 'echo "pkg $*" >> "$MOCK_LOG"\n'
-                         'case "$*" in "update -f -r FreeBSD") exit "${MOCK_PORTS_FAIL:-0}" ;; esac\n')
+                         'case "$*" in "update -f -r FreeBSD") exit "${MOCK_PORTS_FAIL:-0}" ;;\n'
+                         '"upgrade -U -n") [ -n "${MOCK_DRY_ERROR:-}" ] && echo "$MOCK_DRY_ERROR" >&2; '
+                         'exit "${MOCK_DRY_STATUS:-0}" ;; esac\n')
         self.fake("freebsd-version", 'case $1 in -u) echo "${MOCK_USERLAND:-15.1-RELEASE}" ;;\n'
                                      '-r) echo 15.1-RELEASE ;; esac\n')
 
@@ -270,6 +286,13 @@ class UpdateScript(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("unreachable", result.stdout)
         self.assertEqual(self.calls()[-1], "pkg upgrade -U -y")
+
+    def test_empty_dry_run_is_success_but_pkg_error_is_not(self):
+        self.run_update("--repo", "http://192.0.2.5:8080", "-n")
+        self.assertEqual(self.run_update("-n", MOCK_DRY_STATUS="1").returncode, 0)
+        failure = self.run_update("-n", MOCK_DRY_STATUS="1", MOCK_DRY_ERROR="pkg: broken catalogue")
+        self.assertEqual(failure.returncode, 1)
+        self.assertIn("broken catalogue", failure.stderr)
 
     def test_kernel_mismatch_warns_to_copy_the_kernel(self):
         self.run_update("--repo", "http://192.0.2.5:8080", "-n")

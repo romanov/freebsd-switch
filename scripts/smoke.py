@@ -79,7 +79,7 @@ PERSIST_CHECKS = (
     ("PERSIST_OK", f"[ \"$(cat /root/persist-test)\" = '{PERSIST_TEXT}' ]"),
 )
 FALLBACK_CHECKS = (
-    ("FALLBACK_MD0", "mount -p | grep -q '^/dev/md0[[:space:]]*/[[:space:]]'"),
+    ("FALLBACK_MD0", "[ -n \"$(mount -p | sed -n '/^\\/dev\\/md0[[:space:]]*\\/[[:space:]]/p')\" ]"),
     NETWORK_CHECK,
 )
 
@@ -247,7 +247,8 @@ def boot(firmware, disk, variant, log, checks, *, timeout, directory=None, codex
            "-nographic", "-monitor", "none"]
     if stick:
         cmd += ["-drive", f"if=none,file={stick},format=raw,id=stick",
-                "-device", "usb-storage,drive=stick"]
+                "-device", "usb-ehci,id=stickehci",
+                "-device", "usb-storage,drive=stick,bus=stickehci.0"]
     with log.open("wb") as out:
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=out, stderr=subprocess.STDOUT)
         try:

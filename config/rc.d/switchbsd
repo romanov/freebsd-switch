@@ -63,7 +63,7 @@ switchbsd_start()
 	else
 		echo "Clock: $(date) (NTP failed; TLS may reject certificates)"
 	fi
-	echo "Codex: $(codex --version 2>&1 | head -n 1)"
+	echo "Codex: $(/usr/local/bin/codex --version 2>&1 | head -n 1)"
 	echo 'Updates: switchbsd-update (base system from the build host, tools from FreeBSD).'
 }
 

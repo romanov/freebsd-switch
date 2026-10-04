@@ -66,6 +66,12 @@ def usb_stick(image, ufs, label=usb_root.LABEL):
         raise RuntimeError("USB root partition does not contain build/rootfs-usb.ufs")
 
 
+def has_kernel_payload(boot):
+    """An empty package-created kernel directory is not a kernel payload."""
+    return any(path.is_file() or path.is_symlink() or (path.is_dir() and any(path.iterdir()))
+               for path in boot.glob("kernel*"))
+
+
 def usb_root_tree(sd, root=usb_root.USB_ROOT):
     for name in usb_root.USB_REQUIRED:
         if not ((root / name).exists() or (root / name).is_symlink()):
@@ -74,8 +80,15 @@ def usb_root_tree(sd, root=usb_root.USB_ROOT):
         elf_aarch64(root / name)
     for source, target, _ in usb_root.OVERLAY:
         check_hash(root / target, digest(ROOT / source))
+    profile = (root / "root/.profile").read_text()
+    if ". /etc/profile.d/switchbsd.sh" not in profile:
+        raise RuntimeError("The USB root login does not load its profile settings")
+    if "resizewin -z" in profile:
+        raise RuntimeError("The USB root login waits for a terminal size response")
+    if not usb_root.has_root_console_autologin((root / "etc/gettytab").read_text()):
+        raise RuntimeError("The USB root console is missing its local autologin entry")
     usb_root.check_loader_local((sd / "switchbsd/usbroot/loader.conf.local").read_text())
-    if list((root / "boot").glob("kernel*")):
+    if has_kernel_payload(root / "boot"):
         raise RuntimeError("The USB root must not contain a kernel; the loader reads it from SD")
     identity = json.loads((root / "etc/switchbsd-build.json").read_text())
     if any(name.startswith("FreeBSD-kernel") for name in identity["packages"]):

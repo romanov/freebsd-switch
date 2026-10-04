@@ -10,6 +10,7 @@ RAM root stay on the SD card because the firmware cannot read USB.
 import gzip
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -29,8 +30,11 @@ SPEC = BUILD / "rootfs-usb.mtree"
 LABEL = "switchroot"
 ROOT_DEVICE = f"/dev/gpt/{LABEL}"
 LOADER_LOCAL = ROOT / "config/loader.conf.local.usbroot"
-# The console autologin entry; the build checks the packaged gettytab has it.
-CONSOLE_GETTY = "al.Pc"
+# A local console may have no carrier-detect line (QEMU serial and the Switch
+# UART). nc makes getty use CLOCAL while Pc supplies console terminal settings.
+CONSOLE_GETTY = "switchbsd"
+CONSOLE_GETTY_ENTRY = ("\nswitchbsd|SwitchBSD local console:\\\n"
+                       "\t:al=root:nc:tc=Pc:\n")
 TTYS = ("# SwitchBSD USB root: a root shell on the console, whichever device it is.\n"
         f'console\t"/usr/libexec/getty {CONSOLE_GETTY}"\txterm\ton\tsecure\n')
 FSTAB = f"{ROOT_DEVICE}\t/\tufs\trw\t1\t1\n"
@@ -204,16 +208,30 @@ def write(root, relative, text, mode=0o644):
     path.chmod(mode)
 
 
+def has_root_console_autologin(gettytab):
+    """Check the gettytab entry used by the USB root's console."""
+    return bool(re.search(rf"(?m)^{re.escape(CONSOLE_GETTY)}(?:\|[^:\n]+)?:\\\n[ \t]*:al=root:nc:tc=Pc:",
+                          gettytab))
+
+
 def overlay(root, cfg, build_time, packages):
     for source, target, mode in OVERLAY:
         (root / target).unlink(missing_ok=True)
         copy(ROOT / source, root / target)
         (root / target).chmod(mode)
-    gettytab = (root / "etc/gettytab").read_text()
-    if f"\n{CONSOLE_GETTY}|" not in gettytab:
+    gettytab_path = root / "etc/gettytab"
+    gettytab = gettytab_path.read_text() + CONSOLE_GETTY_ENTRY
+    if not has_root_console_autologin(gettytab):
         raise RuntimeError(f"etc/gettytab has no {CONSOLE_GETTY} autologin entry for the console")
+    gettytab_path.write_text(gettytab)
     if "profile.d" not in (root / "etc/profile").read_text():
         raise RuntimeError("etc/profile does not read /etc/profile.d; the console guide would not show")
+    # FreeBSD's root login runs /root/.profile directly. Source the same
+    # environment script there so the local shell and Codex get its settings.
+    profile = root / "root/.profile"
+    profile.write_text(profile.read_text().replace(
+        "if [ -x /usr/bin/resizewin ] ; then /usr/bin/resizewin -z ; fi", "") +
+        "\n. /etc/profile.d/switchbsd.sh\n")
     write(root, "etc/ttys", TTYS)
     write(root, "etc/fstab", FSTAB)
     # rc runs firstboot scripts, such as growfs, once and then deletes this.
@@ -280,6 +298,10 @@ def assemble_usb_root(sd, build_time=None):
     check_loader_local(LOADER_LOCAL.read_text())
     cfg = config()
     if USB_ROOT.exists():
+        # pkgbase marks core files schg even in a staging tree. Clear those
+        # host-side flags before replacing a previous image build; METALOG
+        # still supplies the packaged flags to makefs.
+        run(["chflags", "-R", "noschg,nouchg", USB_ROOT])
         shutil.rmtree(USB_ROOT)
     USB_ROOT.mkdir()
     packages, manifest = install_packages(USB_ROOT, cfg)

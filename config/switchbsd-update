@@ -65,9 +65,17 @@ if ! pkg update -f -r FreeBSD; then
     echo 'switchbsd-update: the FreeBSD package repository is unreachable; Codex and the tools stay as they are.'
 fi
 if [ "$dry_run" = yes ]; then
-    # Exits 1 when upgrades are available.
-    pkg upgrade -U -n
-    exit
+    # pkg also exits 1 with no output when everything is current. Keep
+    # diagnostics as failures, but make that empty result a successful check.
+    errors=$(mktemp) || exit 1
+    pkg upgrade -U -n 2>"$errors"
+    status=$?
+    cat "$errors" >&2
+    if [ "$status" -eq 1 ] && [ ! -s "$errors" ]; then
+        status=0
+    fi
+    rm -f "$errors"
+    exit "$status"
 fi
 pkg upgrade -U -y || exit 1
 
